@@ -23,34 +23,16 @@
 5. 사용할 모델 preset, builtin tools, MCP/OpenAPI 연결, Open Terminal 연결을 Open WebUI에서 먼저 구성한다.
 6. `OPENWEBUI_BOT_USER_ID`는 표시 이름이 아니라 실제 내부 user id로 확인한다.
 
-## 2-1. 시스템 아키텍처
+## 2-1. 아키텍처 문서
 
-이 저장소는 Open WebUI를 대체하지 않고, Open WebUI 바깥에서 동작하는 채널 오케스트레이션 워커입니다.
+시스템 구성과 요청 흐름은 [architecture.md](/Users/julirsia/development/company/openwebui-bot/docs/architecture.md)에 별도로 정리돼 있습니다.
 
-구성 요소:
+운영자가 특히 먼저 읽어야 할 부분:
 
-- `사용자`
-  - Open WebUI 채널 / 스레드에서 대화
-- `Open WebUI`
-  - 인증, 채널 UI, 모델 preset, native tools, terminal connection 관리
-- `owbot Worker`
-  - 멘션 감지, 채널 문맥 수집, completion 요청, 최종 응답 게시
-- `OpenTerminal`
-  - 별도 API 서버
-  - 명령 실행, 파일 조작, skill이 참조하는 로컬 스크립트 실행 기반 제공
-
-실제 요청 흐름:
-
-1. 사용자가 채널 또는 스레드에서 `@TEAM-BOT` 멘션
-2. 워커가 Open WebUI websocket `events:channel`을 통해 메시지 수신
-3. 워커가 Open WebUI REST API로 최근 채널 / 스레드 문맥 조회
-4. 워커가 Open WebUI `/api/chat/completions` 호출
-5. tool / terminal / skill이 필요하면 Open WebUI가 자체 tool lifecycle 수행
-6. terminal이 필요한 경우 Open WebUI가 등록된 terminal connection `url`로 OpenTerminal API 호출
-7. 워커가 websocket completion event에서 최종 답변 회수
-8. 워커가 Open WebUI 채널 메시지 API로 답변 게시
-
-즉 워커는 OpenTerminal에 직접 붙지 않습니다. `terminal_id`만 Open WebUI에 넘기고, 실제 OpenTerminal API 호출은 Open WebUI가 담당합니다.
+- 구성 요소 역할 분리
+- 일반 질의 vs tool / terminal / skill 질의 흐름 차이
+- OpenTerminal connection `url`의 의미
+- skill이 Open WebUI 메타와 OpenTerminal filesystem을 함께 요구한다는 점
 
 ## 3. 환경 변수
 
@@ -137,6 +119,8 @@ export LOG_LEVEL="INFO"
 - terminal connection `url`
   - Open WebUI 관리자 UI에서 설정하는 값
   - 실제 OpenTerminal API base URL
+
+이 둘의 관계와 전체 호출 흐름은 [architecture.md](/Users/julirsia/development/company/openwebui-bot/docs/architecture.md)에 별도로 설명돼 있습니다.
 
 대표 프록시 경로:
 
