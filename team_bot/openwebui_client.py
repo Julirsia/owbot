@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -44,10 +45,15 @@ class OpenWebUIClient:
     ) -> Any:
         url = f"{self.base_url}{path}"
         async with self.session.request(method, url, json=json_body) as response:
-            try:
-                data = await response.json(content_type=None)
-            except aiohttp.ContentTypeError:
-                data = await response.text()
+            raw_text = await response.text()
+            data: Any
+            if not raw_text.strip():
+                data = None
+            else:
+                try:
+                    data = json.loads(raw_text)
+                except json.JSONDecodeError:
+                    data = raw_text
             if response.status >= 400:
                 raise RuntimeError(f"{method} {path} failed with {response.status}: {data}")
             return data
@@ -59,7 +65,14 @@ class OpenWebUIClient:
         )
 
     async def get_channels(self) -> List[Dict[str, Any]]:
-        return await self._request("GET", "/api/v1/channels")
+        response = await self._request("GET", "/api/v1/channels/")
+        if response is None:
+            return []
+        if not isinstance(response, list):
+            raise RuntimeError(
+                f"GET /api/v1/channels/ returned non-list response: {response!r}"
+            )
+        return response
 
     async def get_channel_message(self, channel_id: str, message_id: str) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/channels/{channel_id}/messages/{message_id}")
