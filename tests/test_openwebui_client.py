@@ -118,6 +118,37 @@ class OpenWebUIClientTests(unittest.TestCase):
 
         self.assertEqual(OpenWebUIClient._last_user_content(messages), "마지막 요청")
 
+    def test_inject_assistant_placeholder_updates_chat_history(self) -> None:
+        response = {
+            "chat": {
+                "id": "chat-1",
+                "history": {
+                    "messages": {
+                        "user-1": {
+                            "id": "user-1",
+                            "role": "user",
+                            "content": "질문",
+                            "childrenIds": [],
+                        }
+                    },
+                    "currentId": "user-1",
+                },
+                "messages": [{"id": "user-1", "role": "user", "content": "질문"}],
+            }
+        }
+
+        enriched = OpenWebUIClient._inject_assistant_placeholder(
+            response,
+            user_message_id="user-1",
+            assistant_message_id="assistant-1",
+            model_id="gpt-5-mini",
+            timestamp=123,
+        )
+
+        self.assertEqual(enriched["history"]["currentId"], "assistant-1")
+        self.assertIn("assistant-1", enriched["history"]["messages"])
+        self.assertIn("assistant-1", enriched["history"]["messages"]["user-1"]["childrenIds"])
+
 
 if __name__ == "__main__":
     unittest.main()

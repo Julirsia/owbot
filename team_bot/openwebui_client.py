@@ -174,15 +174,14 @@ class OpenWebUIClient:
 
     async def _run_stateful_chat_completion(self, payload: Dict[str, Any]) -> str:
         session_id = str(uuid.uuid4())
-        chat_id = str(uuid.uuid4())
         user_message_id = str(uuid.uuid4())
         assistant_message_id = str(uuid.uuid4())
         now = int(time.time() * 1000)
         user_content = self._last_user_content(payload.get("messages") or [])
 
-        chat_payload = {
+        create_chat_payload = {
             "chat": {
-                "id": chat_id,
+                "id": str(uuid.uuid4()),
                 "title": "TEAM-BOT Runtime Chat",
                 "models": [payload["model"]],
                 "history": {
@@ -190,35 +189,46 @@ class OpenWebUIClient:
                         user_message_id: {
                             "id": user_message_id,
                             "parentId": None,
-                            "childrenIds": [assistant_message_id],
+                            "childrenIds": [],
                             "role": "user",
                             "content": user_content,
                             "timestamp": now,
                             "models": [payload["model"]],
                         },
-                        assistant_message_id: {
-                            "id": assistant_message_id,
-                            "parentId": user_message_id,
-                            "childrenIds": [],
-                            "role": "assistant",
-                            "content": "",
-                            "timestamp": now,
-                            "models": [payload["model"]],
-                        },
                     },
-                    "currentId": assistant_message_id,
+                    "currentId": user_message_id,
                 },
                 "messages": [
-                    {"id": user_message_id, "role": "user", "content": user_content},
-                    {"id": assistant_message_id, "role": "assistant", "content": ""},
+                    {
+                        "id": user_message_id,
+                        "role": "user",
+                        "content": user_content,
+                        "timestamp": now,
+                        "models": [payload["model"]],
+                    }
                 ],
                 "params": {},
                 "timestamp": now,
             }
         }
 
-        created_chat = await self._request("POST", "/api/v1/chats/new", json_body=chat_payload)
-        chat_id = self._extract_chat_id(created_chat) or chat_id
+        created_chat = await self._request(
+            "POST",
+            "/api/v1/chats/new",
+            json_body=create_chat_payload,
+        )
+        chat_id = self._extract_chat_id(created_chat)
+        if not chat_id:
+            raise RuntimeError(f"Failed to create runtime chat: {created_chat!r}")
+
+        enriched_chat = self._inject_assistant_placeholder(
+            created_chat,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            model_id=str(payload["model"]),
+            timestamp=now,
+        )
+        await self._request("POST", f"/api/v1/chats/{chat_id}", json_body=enriched_chat)
 
         stateful_payload = dict(payload)
         stateful_payload.update(
@@ -239,7 +249,13 @@ class OpenWebUIClient:
             json_body=stateful_payload,
         )
         immediate_text = self._extract_message_text_or_empty(completion_response)
-        await self._notify_chat_completed(chat_id, assistant_message_id, session_id)
+        await self._notify_chat_completed(
+            chat_id,
+            assistant_message_id,
+            session_id,
+            model_id=str(payload["model"]),
+            content=immediate_text,
+        )
         final_text = await self._wait_for_final_chat_message(chat_id, assistant_message_id)
         if final_text:
             return final_text
@@ -253,6 +269,9 @@ class OpenWebUIClient:
         chat_id: str,
         message_id: str,
         session_id: str,
+        *,
+        model_id: str,
+        content: str,
     ) -> None:
         try:
             await self._request(
@@ -262,6 +281,11 @@ class OpenWebUIClient:
                     "chat_id": chat_id,
                     "id": message_id,
                     "session_id": session_id,
+                    "model": model_id,
+                    "message": {
+                        "role": "assistant",
+                        "content": content,
+                    },
                 },
             )
         except Exception:
@@ -400,6 +424,68 @@ class OpenWebUIClient:
                         return content
 
         return ""
+
+    @staticmethod
+    def _inject_assistant_placeholder(
+        response: Any,
+        *,
+        user_message_id: str,
+        assistant_message_id: str,
+        model_id: str,
+        timestamp: int,
+    ) -> Dict[str, Any]:
+        if not isinstance(response, dict):
+            raise RuntimeError(f"Unexpected chat response shape: {response!r}")
+
+        chat = response.get("chat")
+        if isinstance(chat, dict):
+            enriched = dict(chat)
+        else:
+            enriched = dict(response)
+
+        history = dict(enriched.get("history") or {})
+        history_messages = dict(history.get("messages") or {})
+        user_entry = dict(history_messages.get(user_message_id) or {})
+        user_children = list(user_entry.get("childrenIds") or [])
+        if assistant_message_id not in user_children:
+            user_children.append(assistant_message_id)
+        if user_entry:
+            user_entry["childrenIds"] = user_children
+            history_messages[user_message_id] = user_entry
+
+        assistant_entry = {
+            "id": assistant_message_id,
+            "parentId": user_message_id,
+            "childrenIds": [],
+            "role": "assistant",
+            "content": "",
+            "modelName": model_id,
+            "modelIdx": 0,
+            "timestamp": timestamp,
+            "models": [model_id],
+        }
+        history_messages[assistant_message_id] = assistant_entry
+        history["messages"] = history_messages
+        history["currentId"] = assistant_message_id
+        enriched["history"] = history
+
+        messages = list(enriched.get("messages") or [])
+        if not any(str(message.get("id") or "") == assistant_message_id for message in messages):
+            messages.append(
+                {
+                    "id": assistant_message_id,
+                    "role": "assistant",
+                    "content": "",
+                    "parentId": user_message_id,
+                    "modelName": model_id,
+                    "modelIdx": 0,
+                    "timestamp": timestamp,
+                    "models": [model_id],
+                }
+            )
+        enriched["messages"] = messages
+        enriched["models"] = [model_id]
+        return enriched
 
     @staticmethod
     def _collect_text(value: Any) -> str:
