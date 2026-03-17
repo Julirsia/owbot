@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
-import uuid
 from typing import Any, Dict, List, Optional
 
 try:
@@ -23,7 +21,6 @@ class OpenWebUIClient:
         token: str,
         timeout_seconds: int,
         tool_timeout_seconds: int,
-        final_message_wait_seconds: int,
     ) -> None:
         if aiohttp is None:
             raise RuntimeError("aiohttp is required to use OpenWebUIClient")
@@ -31,7 +28,6 @@ class OpenWebUIClient:
         self.token = token
         self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         self.tool_timeout_seconds = tool_timeout_seconds
-        self.final_message_wait_seconds = final_message_wait_seconds
         self._session: Optional[aiohttp.ClientSession] = None
 
     @property
@@ -189,208 +185,18 @@ class OpenWebUIClient:
         if use_native_function_calling:
             payload["params"] = {"function_calling": "native"}
 
-        if use_native_function_calling:
-            initial_response = await self._request(
-                "POST",
-                "/api/chat/completions",
-                json_body=payload,
-                timeout_seconds=self.tool_timeout_seconds,
-            )
-            immediate_text = self._extract_message_text_or_empty(initial_response)
-            tool_names = self._extract_tool_names(initial_response)
-            log.debug(
-                "Initial native completion summary has_immediate_text=%s tool_names=%s",
-                bool(immediate_text),
-                tool_names,
-            )
-            if immediate_text:
-                return immediate_text
-            if tool_names:
-                return await self._run_stateful_chat_completion(payload)
-            return self.extract_message_content(initial_response)
-
-        response = await self._request("POST", "/api/chat/completions", json_body=payload)
-        return self.extract_message_content(response)
-
-    async def _run_stateful_chat_completion(self, payload: Dict[str, Any]) -> str:
-        session_id = str(uuid.uuid4())
-        user_message_id = str(uuid.uuid4())
-        assistant_message_id = str(uuid.uuid4())
-        now = int(time.time() * 1000)
-        user_content = self._last_user_content(payload.get("messages") or [])
-
-        create_chat_payload = {
-            "chat": {
-                "id": str(uuid.uuid4()),
-                "title": "TEAM-BOT Runtime Chat",
-                "models": [payload["model"]],
-                "history": {
-                    "messages": {
-                        user_message_id: {
-                            "id": user_message_id,
-                            "parentId": None,
-                            "childrenIds": [],
-                            "role": "user",
-                            "content": user_content,
-                            "timestamp": now,
-                            "models": [payload["model"]],
-                        },
-                    },
-                    "currentId": user_message_id,
-                },
-                "messages": [
-                    {
-                        "id": user_message_id,
-                        "role": "user",
-                        "content": user_content,
-                        "timestamp": now,
-                        "models": [payload["model"]],
-                    }
-                ],
-                "params": {},
-                "timestamp": now,
-            }
-        }
-
-        created_chat = await self._request(
-            "POST",
-            "/api/v1/chats/new",
-            json_body=create_chat_payload,
-        )
-        chat_id = self._extract_chat_id(created_chat)
-        if not chat_id:
-            raise RuntimeError(f"Failed to create runtime chat: {created_chat!r}")
-
-        enriched_chat = self._inject_assistant_placeholder(
-            created_chat,
-            user_message_id=user_message_id,
-            assistant_message_id=assistant_message_id,
-            model_id=str(payload["model"]),
-            timestamp=now,
-        )
-        await self._request(
-            "POST",
-            f"/api/v1/chats/{chat_id}",
-            json_body={"chat": enriched_chat},
-        )
-
-        stateful_payload = dict(payload)
-        stateful_payload.update(
-            {
-                "chat_id": chat_id,
-                "id": assistant_message_id,
-                "session_id": session_id,
-                "stream": False,
-                "background_tasks": {
-                    "title_generation": False,
-                    "tags_generation": False,
-                    "follow_up_generation": False,
-                },
-            }
-        )
-
-        completion_response = await self._request(
+        response = await self._request(
             "POST",
             "/api/chat/completions",
-            json_body=stateful_payload,
-            timeout_seconds=self.tool_timeout_seconds,
+            json_body=payload,
+            timeout_seconds=self.tool_timeout_seconds if use_native_function_calling else None,
         )
-        immediate_text = self._extract_message_text_or_empty(completion_response)
         log.debug(
-            "Stateful tool completion response summary chat_id=%s assistant_id=%s has_immediate_text=%s tool_names=%s",
-            chat_id,
-            assistant_message_id,
-            bool(immediate_text),
-            self._extract_tool_names(completion_response),
+            "Direct completion summary has_text=%s tool_names=%s",
+            bool(self._extract_message_text_or_empty(response)),
+            self._extract_tool_names(response),
         )
-        completed_response = await self._notify_chat_completed(
-            chat_id,
-            assistant_message_id,
-            session_id,
-            model_id=str(payload["model"]),
-        )
-        completed_text = self._extract_chat_message_content(completed_response, assistant_message_id)
-        if not completed_text:
-            completed_text = self._extract_latest_assistant_message_content(completed_response)
-        if not completed_text:
-            completed_text = self._extract_message_text_or_empty(completed_response)
-        if completed_text:
-            return completed_text
-        final_text = await self._wait_for_final_chat_message(chat_id, assistant_message_id)
-        if final_text:
-            return final_text
-        if immediate_text:
-            return immediate_text
-
-        raise RuntimeError("Tool-enabled completion finished without a final assistant message")
-
-    async def _notify_chat_completed(
-        self,
-        chat_id: str,
-        message_id: str,
-        session_id: str,
-        *,
-        model_id: str,
-    ) -> Any:
-        try:
-            chat_response = await self._request("GET", f"/api/v1/chats/{chat_id}")
-            completed_messages = self._extract_completed_messages(chat_response)
-            response = await self._request(
-                "POST",
-                "/api/chat/completed",
-                json_body={
-                    "chat_id": chat_id,
-                    "id": message_id,
-                    "session_id": session_id,
-                    "model": model_id,
-                    "messages": completed_messages,
-                },
-            )
-            log.debug(
-                "chat/completed response summary chat_id=%s assistant_id=%s summary=%s",
-                chat_id,
-                message_id,
-                self._summarize_chat_response(response),
-            )
-            return response
-        except Exception:
-            log.debug("Ignoring /api/chat/completed failure", exc_info=True)
-            return None
-
-    async def _wait_for_final_chat_message(
-        self,
-        chat_id: str,
-        message_id: str,
-        *,
-        timeout_seconds: float = 15.0,
-        poll_interval_seconds: float = 0.5,
-    ) -> str:
-        effective_timeout_seconds = max(timeout_seconds, float(self.final_message_wait_seconds))
-        deadline = time.monotonic() + effective_timeout_seconds
-        last_error: Optional[Exception] = None
-
-        while time.monotonic() < deadline:
-            try:
-                chat_response = await self._request("GET", f"/api/v1/chats/{chat_id}")
-                content = self._extract_chat_message_content(chat_response, message_id)
-                if not content:
-                    content = self._extract_latest_assistant_message_content(chat_response)
-                if content:
-                    return content
-                log.debug(
-                    "Waiting for final tool message chat_id=%s assistant_id=%s current_summary=%s",
-                    chat_id,
-                    message_id,
-                    self._summarize_chat_response(chat_response),
-                )
-            except Exception as exc:
-                last_error = exc
-
-            await asyncio.sleep(poll_interval_seconds)
-
-        if last_error is not None:
-            raise RuntimeError(f"Failed to fetch final chat message: {last_error}")
-        return ""
+        return self.extract_message_content(response)
 
     @staticmethod
     def extract_message_content(response: Dict[str, Any]) -> str:
@@ -465,220 +271,6 @@ class OpenWebUIClient:
                     if isinstance(name, str) and name.strip():
                         tool_names.append(name.strip())
         return tool_names
-
-    @staticmethod
-    def _last_user_content(messages: List[Dict[str, Any]]) -> str:
-        for message in reversed(messages):
-            if message.get("role") == "user":
-                return str(message.get("content") or "")
-        return ""
-
-    @staticmethod
-    def _extract_chat_id(response: Any) -> str:
-        if isinstance(response, dict):
-            if isinstance(response.get("id"), str):
-                return response["id"]
-            chat = response.get("chat")
-            if isinstance(chat, dict) and isinstance(chat.get("id"), str):
-                return chat["id"]
-        return ""
-
-    @staticmethod
-    def _extract_chat_message_content(response: Any, message_id: str) -> str:
-        if not isinstance(response, dict):
-            return ""
-
-        candidate_chats = [response]
-        chat = response.get("chat")
-        if isinstance(chat, dict):
-            candidate_chats.append(chat)
-        data = response.get("data")
-        if isinstance(data, dict):
-            candidate_chats.append(data)
-
-        for candidate in candidate_chats:
-            history = candidate.get("history") or {}
-            messages = history.get("messages") or {}
-            if isinstance(messages, dict):
-                target = messages.get(message_id)
-                if isinstance(target, dict):
-                    content = OpenWebUIClient._collect_text(target.get("content")).strip()
-                    if content:
-                        return content
-
-            flat_messages = candidate.get("messages") or []
-            if isinstance(flat_messages, list):
-                for message in flat_messages:
-                    if not isinstance(message, dict):
-                        continue
-                    if str(message.get("id") or "") != message_id:
-                        continue
-                    content = OpenWebUIClient._collect_text(message.get("content")).strip()
-                    if content:
-                        return content
-
-        return ""
-
-    @staticmethod
-    def _extract_latest_assistant_message_content(response: Any) -> str:
-        if not isinstance(response, dict):
-            return ""
-
-        candidate_messages: List[Dict[str, Any]] = []
-
-        candidate_chats = [response]
-        chat = response.get("chat")
-        if isinstance(chat, dict):
-            candidate_chats.append(chat)
-        data = response.get("data")
-        if isinstance(data, dict):
-            candidate_chats.append(data)
-
-        for candidate in candidate_chats:
-            history = candidate.get("history") or {}
-            messages = history.get("messages") or {}
-            if isinstance(messages, dict):
-                candidate_messages.extend(
-                    message for message in messages.values() if isinstance(message, dict)
-                )
-
-            flat_messages = candidate.get("messages") or []
-            if isinstance(flat_messages, list):
-                candidate_messages.extend(
-                    message for message in flat_messages if isinstance(message, dict)
-                )
-
-        assistant_messages = [
-            message
-            for message in candidate_messages
-            if str(message.get("role") or "") == "assistant"
-            and OpenWebUIClient._collect_text(message.get("content")).strip()
-        ]
-        if not assistant_messages:
-            return ""
-
-        assistant_messages.sort(
-            key=lambda message: (
-                int(message.get("timestamp") or 0),
-                int(message.get("created_at") or 0),
-            )
-        )
-        latest = assistant_messages[-1]
-        return OpenWebUIClient._collect_text(latest.get("content")).strip()
-
-    @staticmethod
-    def _inject_assistant_placeholder(
-        response: Any,
-        *,
-        user_message_id: str,
-        assistant_message_id: str,
-        model_id: str,
-        timestamp: int,
-    ) -> Dict[str, Any]:
-        if not isinstance(response, dict):
-            raise RuntimeError(f"Unexpected chat response shape: {response!r}")
-
-        chat = response.get("chat")
-        if isinstance(chat, dict):
-            enriched = dict(chat)
-        else:
-            enriched = dict(response)
-
-        history = dict(enriched.get("history") or {})
-        history_messages = dict(history.get("messages") or {})
-        user_entry = dict(history_messages.get(user_message_id) or {})
-        user_children = list(user_entry.get("childrenIds") or [])
-        if assistant_message_id not in user_children:
-            user_children.append(assistant_message_id)
-        if user_entry:
-            user_entry["childrenIds"] = user_children
-            history_messages[user_message_id] = user_entry
-
-        assistant_entry = {
-            "id": assistant_message_id,
-            "parentId": user_message_id,
-            "childrenIds": [],
-            "role": "assistant",
-            "content": "",
-            "modelName": model_id,
-            "modelIdx": 0,
-            "timestamp": timestamp,
-            "models": [model_id],
-        }
-        history_messages[assistant_message_id] = assistant_entry
-        history["messages"] = history_messages
-        history["current_id"] = assistant_message_id
-        history["currentId"] = assistant_message_id
-        enriched["history"] = history
-
-        messages = list(enriched.get("messages") or [])
-        if not any(str(message.get("id") or "") == assistant_message_id for message in messages):
-            messages.append(
-                {
-                    "id": assistant_message_id,
-                    "role": "assistant",
-                    "content": "",
-                    "parentId": user_message_id,
-                    "modelName": model_id,
-                    "modelIdx": 0,
-                    "timestamp": timestamp,
-                    "models": [model_id],
-                }
-            )
-        enriched["messages"] = messages
-        enriched["models"] = [model_id]
-        enriched["currentId"] = assistant_message_id
-        return enriched
-
-    @staticmethod
-    def _extract_completed_messages(response: Any) -> List[Dict[str, Any]]:
-        if not isinstance(response, dict):
-            return []
-
-        candidate_chats = [response]
-        chat = response.get("chat")
-        if isinstance(chat, dict):
-            candidate_chats.append(chat)
-
-        for candidate in candidate_chats:
-            messages = candidate.get("messages")
-            if isinstance(messages, list):
-                return [message for message in messages if isinstance(message, dict)]
-
-        return []
-
-    @staticmethod
-    def _summarize_chat_response(response: Any) -> Dict[str, Any]:
-        summary: Dict[str, Any] = {"assistant_messages": []}
-        if not isinstance(response, dict):
-            summary["response_type"] = type(response).__name__
-            return summary
-
-        candidate_chats = [response]
-        chat = response.get("chat")
-        if isinstance(chat, dict):
-            candidate_chats.append(chat)
-
-        seen_ids = set()
-        for candidate in candidate_chats:
-            history = candidate.get("history") or {}
-            messages = history.get("messages") or {}
-            if isinstance(messages, dict):
-                for message_id, message in messages.items():
-                    if message_id in seen_ids or not isinstance(message, dict):
-                        continue
-                    seen_ids.add(message_id)
-                    if str(message.get("role") or "") == "assistant":
-                        summary["assistant_messages"].append(
-                            {
-                                "id": message_id,
-                                "content_preview": OpenWebUIClient._collect_text(
-                                    message.get("content")
-                                )[:120],
-                            }
-                        )
-
-        return summary
 
     @staticmethod
     def _collect_text(value: Any) -> str:

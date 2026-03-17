@@ -57,7 +57,6 @@ class BotConfig:
     thread_context_limit: int
     completion_timeout_seconds: int
     tool_timeout_seconds: int
-    final_message_wait_seconds: int
     state_db_path: Path
     log_level: str
     socketio_debug: bool
@@ -103,7 +102,6 @@ class BotConfig:
             thread_context_limit=int(os.getenv("THREAD_CONTEXT_LIMIT", "50")),
             completion_timeout_seconds=int(os.getenv("COMPLETION_TIMEOUT_SECONDS", "60")),
             tool_timeout_seconds=int(os.getenv("OPENWEBUI_TOOL_TIMEOUT_SECONDS", "300")),
-            final_message_wait_seconds=int(os.getenv("OPENWEBUI_FINAL_MESSAGE_WAIT_SECONDS", "60")),
             state_db_path=Path(os.getenv("STATE_DB_PATH", "/tmp/team-bot-state.db")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             socketio_debug=_parse_bool(os.getenv("SOCKETIO_DEBUG", "")),
