@@ -167,7 +167,23 @@ class OpenWebUIClient:
             payload["params"] = {"function_calling": "native"}
 
         if use_native_function_calling:
-            return await self._run_stateful_chat_completion(payload)
+            initial_response = await self._request(
+                "POST",
+                "/api/chat/completions",
+                json_body=payload,
+            )
+            immediate_text = self._extract_message_text_or_empty(initial_response)
+            tool_names = self._extract_tool_names(initial_response)
+            log.debug(
+                "Initial native completion summary has_immediate_text=%s tool_names=%s",
+                bool(immediate_text),
+                tool_names,
+            )
+            if immediate_text:
+                return immediate_text
+            if tool_names:
+                return await self._run_stateful_chat_completion(payload)
+            return self.extract_message_content(initial_response)
 
         response = await self._request("POST", "/api/chat/completions", json_body=payload)
         return self.extract_message_content(response)
