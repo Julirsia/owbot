@@ -23,6 +23,35 @@
 5. 사용할 모델 preset, builtin tools, MCP/OpenAPI 연결, Open Terminal 연결을 Open WebUI에서 먼저 구성한다.
 6. `OPENWEBUI_BOT_USER_ID`는 표시 이름이 아니라 실제 내부 user id로 확인한다.
 
+## 2-1. 시스템 아키텍처
+
+이 저장소는 Open WebUI를 대체하지 않고, Open WebUI 바깥에서 동작하는 채널 오케스트레이션 워커입니다.
+
+구성 요소:
+
+- `사용자`
+  - Open WebUI 채널 / 스레드에서 대화
+- `Open WebUI`
+  - 인증, 채널 UI, 모델 preset, native tools, terminal connection 관리
+- `owbot Worker`
+  - 멘션 감지, 채널 문맥 수집, completion 요청, 최종 응답 게시
+- `OpenTerminal`
+  - 별도 API 서버
+  - 명령 실행, 파일 조작, skill이 참조하는 로컬 스크립트 실행 기반 제공
+
+실제 요청 흐름:
+
+1. 사용자가 채널 또는 스레드에서 `@TEAM-BOT` 멘션
+2. 워커가 Open WebUI websocket `events:channel`을 통해 메시지 수신
+3. 워커가 Open WebUI REST API로 최근 채널 / 스레드 문맥 조회
+4. 워커가 Open WebUI `/api/chat/completions` 호출
+5. tool / terminal / skill이 필요하면 Open WebUI가 자체 tool lifecycle 수행
+6. terminal이 필요한 경우 Open WebUI가 등록된 terminal connection `url`로 OpenTerminal API 호출
+7. 워커가 websocket completion event에서 최종 답변 회수
+8. 워커가 Open WebUI 채널 메시지 API로 답변 게시
+
+즉 워커는 OpenTerminal에 직접 붙지 않습니다. `terminal_id`만 Open WebUI에 넘기고, 실제 OpenTerminal API 호출은 Open WebUI가 담당합니다.
+
 ## 3. 환경 변수
 
 필수:
@@ -100,6 +129,32 @@ export LOG_LEVEL="INFO"
 
 이 URL은 `Open WebUI 서버 프로세스가 보는 주소`여야 합니다.
 
+구분:
+
+- `OPENWEBUI_TERMINAL_ID`
+  - 워커가 사용하는 값
+  - Open WebUI 내부 terminal connection 레코드 id
+- terminal connection `url`
+  - Open WebUI 관리자 UI에서 설정하는 값
+  - 실제 OpenTerminal API base URL
+
+대표 프록시 경로:
+
+- `/api/v1/terminals/{terminal_id}/api/config`
+- `/api/v1/terminals/{terminal_id}/files/cwd`
+- `/api/v1/terminals/{terminal_id}/ports`
+
+대표 OpenTerminal API:
+
+- `/openapi.json`
+- `/execute`
+- `/execute/{process_id}/status`
+- `/files/list`
+- `/files/read`
+- `/files/grep`
+- `/files/write`
+- `/files/replace`
+
 예:
 
 - Open WebUI와 Open Terminal이 같은 Docker host에 있고 Open WebUI가 컨테이너로 뜬 경우
@@ -109,6 +164,8 @@ export LOG_LEVEL="INFO"
   - `http://open-terminal:8000` 같은 내부 서비스명을 사용할 수 있습니다
 - bare metal 또는 같은 VM에서 직접 띄운 경우
   - 그때만 `http://localhost:8000`이 맞을 수 있습니다
+- reverse proxy 뒤에서 OpenTerminal을 따로 노출한 경우
+  - `https://open-terminal.company.internal`처럼 Open WebUI 서버에서 실제로 라우팅 가능한 주소를 사용해야 합니다
 
 운영 전에 반드시 Open WebUI 서버 기준으로 아래 프록시가 200이 나는지 확인합니다.
 
@@ -168,6 +225,7 @@ python -m team_bot.main
 4. 워커를 `LOG_LEVEL=DEBUG`로 실행
 5. 다른 사용자 계정으로 채널에서 자동완성 멘션
 6. 채널 응답과 로그를 함께 확인
+7. terminal을 쓴다면 Open WebUI 프록시와 OpenTerminal 자체 스펙 경로가 모두 정상인지 확인
 
 반복 검증이 필요하면 [scripts/run_channel_e2e.py](/Users/julirsia/development/company/openwebui-bot/scripts/run_channel_e2e.py)를 사용합니다.
 
