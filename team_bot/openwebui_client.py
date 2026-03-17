@@ -141,10 +141,13 @@ class OpenWebUIClient:
             "model": model_id,
             "messages": messages,
             "stream": False,
-            "tool_ids": tool_ids,
-            "tool_servers": tool_server_ids or None,
-            "features": features,
         }
+        if tool_ids:
+            payload["tool_ids"] = tool_ids
+        if tool_server_ids:
+            payload["tool_servers"] = tool_server_ids
+        if features:
+            payload["features"] = features
         if terminal_id:
             payload["terminal_id"] = terminal_id
         if skill_ids:

@@ -72,6 +72,8 @@ python -m team_bot.main
 - 스레드에서 호출하면 같은 스레드에 답합니다.
 - `OPENWEBUI_TERMINAL_ID`가 설정되어 있으면 completion 요청에 `terminal_id`를 함께 보내 Open Terminal 실행을 허용합니다.
 - `OPENWEBUI_SKILL_IDS`가 설정되어 있으면 completion 요청에 `skill_ids`를 함께 보냅니다.
+- `OPENWEBUI_TOOL_IDS`, `OPENWEBUI_TOOL_SERVER_IDS`, `OPENWEBUI_FEATURES_JSON`가 비어 있으면 해당 값들은 요청 바디에서 생략되고, 모델 UI에 저장된 기본 도구/기능 설정을 그대로 사용합니다.
+- 위 세 값을 env에 넣으면 모델 UI 설정보다 요청 바디 값이 우선합니다.
 
 ## 5. 장애 대응
 

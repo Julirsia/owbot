@@ -2,6 +2,8 @@
 
 Open WebUI 채널에서 `@TEAM-BOT`을 멘션하면 최근 채널 문맥과 현재 스레드 문맥을 읽고 응답하는 외부 워커형 봇입니다.
 
+기본적으로 모델 UI에 저장된 도구 설정을 따르며, `OPENWEBUI_TOOL_IDS` / `OPENWEBUI_TOOL_SERVER_IDS` / `OPENWEBUI_FEATURES_JSON`를 지정한 경우에만 해당 값으로 명시 오버라이드합니다. `OPENWEBUI_TERMINAL_ID` / `OPENWEBUI_SKILL_IDS`는 별도로 추가 전달됩니다.
+
 ## 구조
 
 - `team_bot/config.py`: 환경 변수 로딩과 검증
