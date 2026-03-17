@@ -159,7 +159,67 @@ python -m team_bot.main
 5. 다른 사용자 계정으로 채널에서 자동완성 멘션
 6. 채널 응답과 로그를 함께 확인
 
-## 9. 장애 대응
+## 9. 채널 / 스레드 E2E 검증 매트릭스
+
+운영 투입 전에는 아래 여섯 가지를 실제로 모두 통과시켜야 합니다.
+
+### A. 메인 채널 멘션
+
+1. 일반 응답
+   - 예: `@TEAM-BOT 지금 뭐가 보이는지 한 줄로 요약해줘`
+   - 기대 결과: 메인 채널에 최상위 메시지로 답변
+2. tool 호출
+   - 예: `@TEAM-BOT 현재 사용 가능한 knowledge base를 알려줘`
+   - 기대 결과: tool이 실행되고 최종 자연어 답변이 메인 채널에 게시됨
+3. terminal 호출
+   - 예: `@TEAM-BOT 현재 시스템에서 실행 중인 프로세스를 확인해줘. 가능하면 터미널을 사용해.`
+   - 기대 결과: terminal tool이 실행되고 최종 요약 답변이 메인 채널에 게시됨
+
+### B. 스레드 멘션
+
+1. 일반 응답
+   - 스레드 안에서 `@TEAM-BOT 이 스레드 문맥만 보고 답해줘`
+   - 기대 결과: 같은 스레드에 답글로 응답
+2. tool 호출
+   - 스레드 안에서 knowledge / notes / MCP tool이 필요한 요청
+   - 기대 결과: 같은 스레드에서 tool 실행 후 최종 자연어 답변까지 이어짐
+3. terminal 호출
+   - 스레드 안에서 terminal이 필요한 요청
+   - 기대 결과: 같은 스레드에서 terminal tool 실행 후 최종 자연어 답변까지 이어짐
+
+검증 기준:
+
+- 단순히 `tool_calls`가 보이는 것만으로 통과로 보지 않습니다.
+- 최종 assistant 자연어 답변이 실제 채널 또는 스레드에 게시돼야 통과입니다.
+- 메인 채널 호출은 메인 채널 최상위 메시지, 스레드 호출은 같은 스레드 답글 위치가 맞아야 합니다.
+
+로컬 참고 결과:
+
+- 2026-03-17 로컬 Docker 검증에서는 아래 네 가지가 실제 통과했습니다.
+- 메인 채널 멘션 + knowledge tool 응답
+- 메인 채널 멘션 + Open Terminal 응답
+- 스레드 멘션 + knowledge tool 응답
+- 스레드 멘션 + Open Terminal 응답
+- 이 결과는 로컬 검증 참고용입니다. 실제 운영 환경에서는 같은 항목을 다시 검증해야 합니다.
+
+## 10. 운영 검증 시 로그 포인트
+
+tool / terminal 검증 시 아래 로그가 같이 보여야 정상입니다.
+
+- `Accepted bot invocation ...`
+- `Processing invocation ...`
+- `Starting background chat completion ...`
+- `Completion event ... type=chat:completion ...`
+- 마지막에 `chat:completion`의 `done=true` 또는 `chat:active active=false`
+- `Posting response channel_id=...`
+
+실패 판정:
+
+- `Accepted bot invocation`까지만 나오고 응답이 없으면 completion lifecycle 문제
+- `tool_calls`는 보이는데 최종 메시지가 안 올라오면 websocket `events` 최종 회수 문제
+- 메인 채널 호출인데 스레드에 달리거나, 스레드 호출인데 메인 채널에 올라오면 응답 위치 버그
+
+## 11. 장애 대응
 
 - 봇이 무응답이면 먼저 Open WebUI 토큰과 `OPENWEBUI_BOT_USER_ID` 일치 여부를 봅니다.
 - `OPENWEBUI_BOT_TOKEN`이 `sk-...` API 키라면 websocket 수신용으로는 부족할 수 있습니다. 이 경우 `OPENWEBUI_BOT_SESSION_TOKEN` 또는 `OPENWEBUI_BOT_EMAIL` / `OPENWEBUI_BOT_PASSWORD`도 함께 설정합니다.
