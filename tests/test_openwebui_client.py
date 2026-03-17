@@ -4,6 +4,19 @@ from team_bot.openwebui_client import OpenWebUIClient
 
 
 class OpenWebUIClientTests(unittest.TestCase):
+    def test_flush_sse_event_lines_joins_data_lines(self) -> None:
+        lines = [
+            "event: message",
+            'data: {"choices": [',
+            'data:   {"delta": {"content": "첫째"}}',
+            "data: ]}",
+        ]
+
+        self.assertEqual(
+            OpenWebUIClient._flush_sse_event_lines(lines),
+            '{"choices": [\n{"delta": {"content": "첫째"}}\n]}',
+        )
+
     def test_extract_message_content_reads_text_list(self) -> None:
         response = {
             "choices": [
@@ -88,6 +101,35 @@ class OpenWebUIClientTests(unittest.TestCase):
             OpenWebUIClient._extract_tool_names(chunk),
             ["run_terminal_command", "read_file"],
         )
+
+    def test_extract_stream_delta_text_reads_chunk_text(self) -> None:
+        chunk = {
+            "choices": [
+                {
+                    "delta": {
+                        "content": [
+                            {"type": "text", "text": "중간"},
+                            {"type": "output_text", "text": " 응답"},
+                        ]
+                    }
+                }
+            ]
+        }
+
+        self.assertEqual(OpenWebUIClient._extract_stream_delta_text(chunk), "중간 응답")
+
+    def test_extract_stream_message_text_reads_terminal_message(self) -> None:
+        chunk = {
+            "choices": [
+                {
+                    "message": {
+                        "content": [{"type": "output_text", "text": "최종 응답"}],
+                    }
+                }
+            ]
+        }
+
+        self.assertEqual(OpenWebUIClient._extract_stream_message_text(chunk), "최종 응답")
 
 
 if __name__ == "__main__":

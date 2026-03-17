@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 try:
     import aiohttp
@@ -178,7 +178,7 @@ class OpenWebUIClient:
         payload: Dict[str, Any] = {
             "model": model_id,
             "messages": messages,
-            "stream": False,
+            "stream": use_native_function_calling,
         }
         if tool_ids:
             payload["tool_ids"] = tool_ids
@@ -200,11 +200,13 @@ class OpenWebUIClient:
             use_native_function_calling,
             self._summarize_payload(payload),
         )
+        if use_native_function_calling:
+            return await self._stream_chat_completion(payload)
+
         response = await self._request(
             "POST",
             "/api/chat/completions",
             json_body=payload,
-            timeout_seconds=self.tool_timeout_seconds if use_native_function_calling else None,
         )
         log.debug(
             "Direct completion summary has_text=%s tool_names=%s",
@@ -212,6 +214,99 @@ class OpenWebUIClient:
             self._extract_tool_names(response),
         )
         return self.extract_message_content(response)
+
+    async def _stream_chat_completion(self, payload: Dict[str, Any]) -> str:
+        url = f"{self.base_url}/api/chat/completions"
+        request_timeout = aiohttp.ClientTimeout(total=self.tool_timeout_seconds)
+        try:
+            async with self.session.request(
+                "POST",
+                url,
+                json=payload,
+                timeout=request_timeout,
+            ) as response:
+                if response.status >= 400:
+                    raw_text = await response.text()
+                    data = self._decode_response_body(raw_text)
+                    log.error(
+                        "Open WebUI request failed method=%s path=%s status=%s body=%s response=%s",
+                        "POST",
+                        "/api/chat/completions",
+                        response.status,
+                        self._summarize_payload(payload),
+                        self._safe_repr(data),
+                    )
+                    raise RuntimeError(
+                        f"POST /api/chat/completions failed with {response.status}: {data}"
+                    )
+
+                content_type = response.headers.get("Content-Type", "")
+                if "text/event-stream" not in content_type.lower():
+                    raw_text = await response.text()
+                    data = self._decode_response_body(raw_text)
+                    log.debug(
+                        "Native completion returned non-SSE content-type=%s has_text=%s tool_names=%s",
+                        content_type,
+                        bool(self._extract_message_text_or_empty(data)),
+                        self._extract_tool_names(data) if isinstance(data, dict) else [],
+                    )
+                    if not isinstance(data, dict):
+                        raise RuntimeError(
+                            "Streaming completion returned a non-JSON non-SSE response"
+                        )
+                    return self.extract_message_content(data)
+
+                text_parts: List[str] = []
+                terminal_message_text: str = ""
+                tool_names: List[str] = []
+                async for event in self._iter_sse_events(response):
+                    if event == "[DONE]":
+                        break
+
+                    payload_data = self._decode_response_body(event)
+                    if not isinstance(payload_data, dict):
+                        log.debug(
+                            "Skipping non-JSON SSE payload from chat completion: %s",
+                            self._safe_repr(payload_data),
+                        )
+                        continue
+
+                    event_tool_names = self._extract_tool_names(payload_data)
+                    if event_tool_names:
+                        tool_names.extend(event_tool_names)
+                        log.debug(
+                            "Observed intermediate tool_calls while waiting for final text: %s",
+                            event_tool_names,
+                        )
+
+                    delta_text = self._extract_stream_delta_text(payload_data)
+                    if delta_text:
+                        text_parts.append(delta_text)
+                        continue
+
+                    message_text = self._extract_stream_message_text(payload_data)
+                    if message_text:
+                        terminal_message_text = message_text
+
+                final_text = "".join(text_parts).strip() or terminal_message_text.strip()
+                deduped_tool_names = list(dict.fromkeys(tool_names))
+                log.debug(
+                    "Streamed completion summary has_text=%s tool_names=%s",
+                    bool(final_text),
+                    deduped_tool_names,
+                )
+                if final_text:
+                    return final_text
+                if deduped_tool_names:
+                    return (
+                        "도구를 호출했지만 최종 텍스트 응답이 비어 있습니다. 호출된 도구: "
+                        + ", ".join(deduped_tool_names)
+                    )
+                raise RuntimeError("Streaming completion ended without text or tool calls")
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"POST /api/chat/completions timed out after {self.tool_timeout_seconds} seconds"
+            ) from exc
 
     @staticmethod
     def extract_message_content(response: Dict[str, Any]) -> str:
@@ -234,6 +329,46 @@ class OpenWebUIClient:
                 )
 
         raise RuntimeError(f"Completion returned unsupported content: {response}")
+
+    @staticmethod
+    async def _iter_sse_events(response: aiohttp.ClientResponse) -> AsyncIterator[str]:
+        buffer = ""
+        event_lines: List[str] = []
+
+        async for chunk in response.content.iter_any():
+            buffer += chunk.decode("utf-8", errors="replace")
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                line = line.rstrip("\r")
+                if not line:
+                    payload = OpenWebUIClient._flush_sse_event_lines(event_lines)
+                    event_lines.clear()
+                    if payload is not None:
+                        yield payload
+                    continue
+                event_lines.append(line)
+
+        trailing = buffer.rstrip("\r")
+        if trailing:
+            event_lines.append(trailing)
+        payload = OpenWebUIClient._flush_sse_event_lines(event_lines)
+        if payload is not None:
+            yield payload
+
+    @staticmethod
+    def _flush_sse_event_lines(event_lines: List[str]) -> Optional[str]:
+        if not event_lines:
+            return None
+
+        data_lines: List[str] = []
+        for line in event_lines:
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+        if not data_lines:
+            return None
+        return "\n".join(data_lines)
 
     @staticmethod
     def _extract_message_text_or_empty(response: Any) -> str:
@@ -264,6 +399,61 @@ class OpenWebUIClient:
                     if extracted:
                         return extracted
 
+        return ""
+
+    @staticmethod
+    def _extract_stream_delta_text(response: Any) -> str:
+        if not isinstance(response, dict):
+            return ""
+
+        parts: List[str] = []
+        choices = response.get("choices") or []
+        if not isinstance(choices, list):
+            return ""
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta") or {}
+            if not isinstance(delta, dict):
+                continue
+            for candidate in (delta.get("content"), delta.get("text"), delta.get("response")):
+                extracted = OpenWebUIClient._collect_text(candidate)
+                if extracted:
+                    parts.append(extracted)
+        return "".join(parts).strip()
+
+    @staticmethod
+    def _extract_stream_message_text(response: Any) -> str:
+        if not isinstance(response, dict):
+            return ""
+
+        for candidate in (
+            response.get("message"),
+            response.get("content"),
+            response.get("text"),
+            response.get("response"),
+        ):
+            extracted = OpenWebUIClient._collect_text(candidate).strip()
+            if extracted:
+                return extracted
+
+        choices = response.get("choices") or []
+        if not isinstance(choices, list):
+            return ""
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message") or {}
+            for candidate in (
+                message.get("content"),
+                message.get("text"),
+                choice.get("text"),
+                choice.get("content"),
+                choice.get("response"),
+            ):
+                extracted = OpenWebUIClient._collect_text(candidate).strip()
+                if extracted:
+                    return extracted
         return ""
 
     @staticmethod
@@ -337,6 +527,15 @@ class OpenWebUIClient:
         if len(rendered) > limit:
             return rendered[: limit - 3] + "..."
         return rendered
+
+    @staticmethod
+    def _decode_response_body(raw_text: str) -> Any:
+        if not raw_text.strip():
+            return None
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError:
+            return raw_text
 
     async def start_typing_loop(
         self,
