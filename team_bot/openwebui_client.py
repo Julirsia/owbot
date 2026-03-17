@@ -330,6 +330,8 @@ class OpenWebUIClient:
             try:
                 chat_response = await self._request("GET", f"/api/v1/chats/{chat_id}")
                 content = self._extract_chat_message_content(chat_response, message_id)
+                if not content:
+                    content = self._extract_latest_assistant_message_content(chat_response)
                 if content:
                     return content
             except Exception as exc:
@@ -448,6 +450,50 @@ class OpenWebUIClient:
                         return content
 
         return ""
+
+    @staticmethod
+    def _extract_latest_assistant_message_content(response: Any) -> str:
+        if not isinstance(response, dict):
+            return ""
+
+        candidate_messages: List[Dict[str, Any]] = []
+
+        candidate_chats = [response]
+        chat = response.get("chat")
+        if isinstance(chat, dict):
+            candidate_chats.append(chat)
+
+        for candidate in candidate_chats:
+            history = candidate.get("history") or {}
+            messages = history.get("messages") or {}
+            if isinstance(messages, dict):
+                candidate_messages.extend(
+                    message for message in messages.values() if isinstance(message, dict)
+                )
+
+            flat_messages = candidate.get("messages") or []
+            if isinstance(flat_messages, list):
+                candidate_messages.extend(
+                    message for message in flat_messages if isinstance(message, dict)
+                )
+
+        assistant_messages = [
+            message
+            for message in candidate_messages
+            if str(message.get("role") or "") == "assistant"
+            and OpenWebUIClient._collect_text(message.get("content")).strip()
+        ]
+        if not assistant_messages:
+            return ""
+
+        assistant_messages.sort(
+            key=lambda message: (
+                int(message.get("timestamp") or 0),
+                int(message.get("created_at") or 0),
+            )
+        )
+        latest = assistant_messages[-1]
+        return OpenWebUIClient._collect_text(latest.get("content")).strip()
 
     @staticmethod
     def _inject_assistant_placeholder(

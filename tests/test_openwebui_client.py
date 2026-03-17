@@ -165,6 +165,33 @@ class OpenWebUIClientTests(unittest.TestCase):
             response["chat"]["messages"],
         )
 
+    def test_extract_latest_assistant_message_content_reads_newest_non_empty_assistant(self) -> None:
+        response = {
+            "chat": {
+                "history": {
+                    "messages": {
+                        "assistant-1": {
+                            "id": "assistant-1",
+                            "role": "assistant",
+                            "content": "",
+                            "timestamp": 100,
+                        },
+                        "assistant-2": {
+                            "id": "assistant-2",
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "최신 응답"}],
+                            "timestamp": 200,
+                        },
+                    }
+                }
+            }
+        }
+
+        self.assertEqual(
+            OpenWebUIClient._extract_latest_assistant_message_content(response),
+            "최신 응답",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
