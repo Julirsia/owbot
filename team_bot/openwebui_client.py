@@ -5,7 +5,10 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-import aiohttp
+try:
+    import aiohttp
+except ImportError:  # pragma: no cover - runtime dependency loaded via requirements
+    aiohttp = None  # type: ignore[assignment]
 
 
 log = logging.getLogger(__name__)
@@ -13,6 +16,8 @@ log = logging.getLogger(__name__)
 
 class OpenWebUIClient:
     def __init__(self, base_url: str, token: str, timeout_seconds: int) -> None:
+        if aiohttp is None:
+            raise RuntimeError("aiohttp is required to use OpenWebUIClient")
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
@@ -167,19 +172,53 @@ class OpenWebUIClient:
 
         message = choices[0].get("message") or {}
         content = message.get("content")
-        if isinstance(content, str):
-            return content.strip()
 
-        if isinstance(content, list):
-            parts = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    parts.append(str(item.get("text") or ""))
-            joined = "".join(parts).strip()
-            if joined:
-                return joined
+        extracted = OpenWebUIClient._collect_text(content).strip()
+        if extracted:
+            return extracted
+
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls:
+            tool_names = []
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function") or {}
+                name = function.get("name")
+                if isinstance(name, str) and name.strip():
+                    tool_names.append(name.strip())
+            if tool_names:
+                return "도구를 호출했지만 최종 텍스트 응답이 비어 있습니다. 호출된 도구: " + ", ".join(
+                    tool_names
+                )
+
+        choice_text = OpenWebUIClient._collect_text(choices[0].get("text")).strip()
+        if choice_text:
+            return choice_text
 
         raise RuntimeError(f"Completion returned unsupported content: {response}")
+
+    @staticmethod
+    def _collect_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts = [OpenWebUIClient._collect_text(item) for item in value]
+            return "".join(part for part in parts if part)
+        if isinstance(value, dict):
+            value_type = value.get("type")
+            if value_type in {"text", "output_text", "input_text"}:
+                text = value.get("text")
+                if isinstance(text, str):
+                    return text
+            for key in ("text", "content", "value", "output"):
+                if key in value:
+                    nested = OpenWebUIClient._collect_text(value.get(key))
+                    if nested:
+                        return nested
+        return ""
 
     async def start_typing_loop(
         self,
