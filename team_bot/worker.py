@@ -138,11 +138,14 @@ class TeamBotWorker:
             )
             await self.handle_channel_event(event)
 
+        def make_channel_handler(event_name: str):
+            async def _handler(event: Dict[str, Any]) -> None:
+                await on_channel_event(event_name, event)
+
+            return _handler
+
         for event_name in CHANNEL_EVENT_NAMES:
-            self.sio.on(
-                event_name,
-                handler=lambda event, event_name=event_name: on_channel_event(event_name, event),
-            )
+            self.sio.on(event_name, handler=make_channel_handler(event_name))
 
         @self.sio.on("*")
         async def on_any_event(event: str, *args: Any) -> None:
