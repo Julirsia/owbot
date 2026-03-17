@@ -54,13 +54,13 @@ class OpenWebUIClientTests(unittest.TestCase):
         self.assertIn("list_tools", OpenWebUIClient.extract_message_content(response))
         self.assertIn("run_terminal_command", OpenWebUIClient.extract_message_content(response))
 
-    def test_extract_stream_text_reads_delta_content(self) -> None:
-        chunk = {
+    def test_extract_message_text_or_empty_reads_message_content(self) -> None:
+        response = {
             "choices": [
                 {
-                    "delta": {
+                    "message": {
                         "content": [
-                            {"type": "output_text", "text": "스트리밍"},
+                            {"type": "output_text", "text": "일반"},
                             {"type": "text", "text": " 응답"},
                         ]
                     }
@@ -68,7 +68,7 @@ class OpenWebUIClientTests(unittest.TestCase):
             ]
         }
 
-        self.assertEqual(OpenWebUIClient._extract_stream_text(chunk), "스트리밍 응답")
+        self.assertEqual(OpenWebUIClient._extract_message_text_or_empty(response), "일반 응답")
 
     def test_extract_tool_names_reads_delta_tool_calls(self) -> None:
         chunk = {

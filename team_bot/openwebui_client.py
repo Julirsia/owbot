@@ -150,7 +150,7 @@ class OpenWebUIClient:
         payload: Dict[str, Any] = {
             "model": model_id,
             "messages": messages,
-            "stream": use_native_function_calling,
+            "stream": False,
         }
         if tool_ids:
             payload["tool_ids"] = tool_ids
@@ -233,62 +233,20 @@ class OpenWebUIClient:
             }
         )
 
-        await self._stream_chat_completion(stateful_payload)
+        completion_response = await self._request(
+            "POST",
+            "/api/chat/completions",
+            json_body=stateful_payload,
+        )
+        immediate_text = self._extract_message_text_or_empty(completion_response)
         await self._notify_chat_completed(chat_id, assistant_message_id, session_id)
         final_text = await self._wait_for_final_chat_message(chat_id, assistant_message_id)
         if final_text:
             return final_text
+        if immediate_text:
+            return immediate_text
 
         raise RuntimeError("Tool-enabled completion finished without a final assistant message")
-
-    async def _stream_chat_completion(self, payload: Dict[str, Any]) -> str:
-        url = f"{self.base_url}/api/chat/completions"
-        text_parts: List[str] = []
-        tool_names: List[str] = []
-
-        async with self.session.post(url, json=payload) as response:
-            if response.status >= 400:
-                raw_text = await response.text()
-                raise RuntimeError(
-                    f"POST /api/chat/completions failed with {response.status}: {raw_text}"
-                )
-
-            while True:
-                raw_line = await response.content.readline()
-                if not raw_line:
-                    break
-
-                line = raw_line.decode("utf-8", errors="replace").strip()
-                if not line or not line.startswith("data:"):
-                    continue
-
-                data = line[len("data:") :].strip()
-                if not data or data == "[DONE]":
-                    continue
-
-                try:
-                    chunk = json.loads(data)
-                except json.JSONDecodeError:
-                    log.debug("Skipping non-JSON stream chunk: %r", data)
-                    continue
-
-                chunk_text = self._extract_stream_text(chunk)
-                if chunk_text:
-                    text_parts.append(chunk_text)
-
-                tool_names.extend(self._extract_tool_names(chunk))
-
-        combined_text = "".join(text_parts).strip()
-        if combined_text:
-            return combined_text
-
-        deduped_tool_names = list(dict.fromkeys(name for name in tool_names if name))
-        if deduped_tool_names:
-            return "도구를 호출했지만 최종 텍스트 응답이 비어 있습니다. 호출된 도구: " + ", ".join(
-                deduped_tool_names
-            )
-
-        raise RuntimeError("Streaming completion ended without text or tool calls")
 
     async def _notify_chat_completed(
         self,
@@ -337,17 +295,15 @@ class OpenWebUIClient:
 
     @staticmethod
     def extract_message_content(response: Dict[str, Any]) -> str:
+        extracted = OpenWebUIClient._extract_message_text_or_empty(response)
+        if extracted:
+            return extracted
+
         choices = response.get("choices") or []
         if not choices:
             raise RuntimeError(f"Completion returned no choices: {response}")
 
         message = choices[0].get("message") or {}
-        content = message.get("content")
-
-        extracted = OpenWebUIClient._collect_text(content).strip()
-        if extracted:
-            return extracted
-
         tool_calls = message.get("tool_calls") or []
         if tool_calls:
             tool_names = OpenWebUIClient._extract_tool_names({"choices": [{"message": message}]})
@@ -357,22 +313,17 @@ class OpenWebUIClient:
                     deduped_tool_names
                 )
 
-        choice_text = OpenWebUIClient._collect_text(choices[0].get("text")).strip()
-        if choice_text:
-            return choice_text
-
         raise RuntimeError(f"Completion returned unsupported content: {response}")
 
     @staticmethod
-    def _extract_stream_text(response: Dict[str, Any]) -> str:
+    def _extract_message_text_or_empty(response: Any) -> str:
         choices = response.get("choices") or []
-        if not choices:
+        if not isinstance(choices, list) or not choices:
             return ""
 
         choice = choices[0] or {}
-        delta = choice.get("delta") or {}
-
-        for candidate in (delta.get("content"), choice.get("message", {}).get("content"), choice.get("text")):
+        message = choice.get("message") or {}
+        for candidate in (message.get("content"), choice.get("text")):
             extracted = OpenWebUIClient._collect_text(candidate).strip()
             if extracted:
                 return extracted
