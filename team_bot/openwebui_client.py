@@ -77,6 +77,14 @@ class OpenWebUIClient:
                     except json.JSONDecodeError:
                         data = raw_text
                 if response.status >= 400:
+                    log.error(
+                        "Open WebUI request failed method=%s path=%s status=%s body=%s response=%s",
+                        method,
+                        path,
+                        response.status,
+                        self._summarize_payload(json_body),
+                        self._safe_repr(data),
+                    )
                     raise RuntimeError(f"{method} {path} failed with {response.status}: {data}")
                 return data
         except asyncio.TimeoutError as exc:
@@ -185,6 +193,12 @@ class OpenWebUIClient:
         if use_native_function_calling:
             payload["params"] = {"function_calling": "native"}
 
+        log.debug(
+            "Posting chat completion model=%s native=%s payload=%s",
+            model_id,
+            use_native_function_calling,
+            self._summarize_payload(payload),
+        )
         response = await self._request(
             "POST",
             "/api/chat/completions",
@@ -293,6 +307,35 @@ class OpenWebUIClient:
                     if nested:
                         return nested
         return ""
+
+    @staticmethod
+    def _summarize_payload(payload: Any) -> Any:
+        if not isinstance(payload, dict):
+            return payload
+
+        summary: Dict[str, Any] = {}
+        for key, value in payload.items():
+            if key == "messages" and isinstance(value, list):
+                summary[key] = {
+                    "count": len(value),
+                    "roles": [message.get("role") for message in value if isinstance(message, dict)],
+                }
+                continue
+            if key in {"tool_ids", "tool_servers", "skill_ids"} and isinstance(value, list):
+                summary[key] = value
+                continue
+            if key == "features" and isinstance(value, dict):
+                summary[key] = sorted(value.keys())
+                continue
+            summary[key] = value
+        return summary
+
+    @staticmethod
+    def _safe_repr(value: Any, limit: int = 2000) -> str:
+        rendered = repr(value)
+        if len(rendered) > limit:
+            return rendered[: limit - 3] + "..."
+        return rendered
 
     async def start_typing_loop(
         self,
