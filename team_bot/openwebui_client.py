@@ -240,7 +240,7 @@ class OpenWebUIClient:
                 "chat_id": chat_id,
                 "id": assistant_message_id,
                 "session_id": session_id,
-                "stream": True,
+                "stream": False,
                 "background_tasks": {
                     "title_generation": False,
                     "tags_generation": False,
@@ -249,7 +249,19 @@ class OpenWebUIClient:
             }
         )
 
-        await self._drain_stream_completion(stateful_payload)
+        completion_response = await self._request(
+            "POST",
+            "/api/chat/completions",
+            json_body=stateful_payload,
+        )
+        immediate_text = self._extract_message_text_or_empty(completion_response)
+        log.debug(
+            "Stateful tool completion response summary chat_id=%s assistant_id=%s has_immediate_text=%s tool_names=%s",
+            chat_id,
+            assistant_message_id,
+            bool(immediate_text),
+            self._extract_tool_names(completion_response),
+        )
         await self._notify_chat_completed(
             chat_id,
             assistant_message_id,
@@ -259,36 +271,10 @@ class OpenWebUIClient:
         final_text = await self._wait_for_final_chat_message(chat_id, assistant_message_id)
         if final_text:
             return final_text
+        if immediate_text:
+            return immediate_text
 
         raise RuntimeError("Tool-enabled completion finished without a final assistant message")
-
-    async def _drain_stream_completion(self, payload: Dict[str, Any]) -> None:
-        url = f"{self.base_url}/api/chat/completions"
-
-        async with self.session.post(url, json=payload) as response:
-            if response.status >= 400:
-                raw_text = await response.text()
-                raise RuntimeError(
-                    f"POST /api/chat/completions failed with {response.status}: {raw_text}"
-                )
-
-            saw_data = False
-            while True:
-                raw_line = await response.content.readline()
-                if not raw_line:
-                    break
-
-                line = raw_line.decode("utf-8", errors="replace").strip()
-                if not line or not line.startswith("data:"):
-                    continue
-
-                saw_data = True
-                data = line[len("data:") :].strip()
-                if data == "[DONE]":
-                    break
-
-            if not saw_data:
-                log.debug("Tool-enabled streaming completion ended without SSE data chunks")
 
     async def _notify_chat_completed(
         self,
@@ -334,6 +320,12 @@ class OpenWebUIClient:
                     content = self._extract_latest_assistant_message_content(chat_response)
                 if content:
                     return content
+                log.debug(
+                    "Waiting for final tool message chat_id=%s assistant_id=%s current_summary=%s",
+                    chat_id,
+                    message_id,
+                    self._summarize_chat_response(chat_response),
+                )
             except Exception as exc:
                 last_error = exc
 
@@ -575,6 +567,39 @@ class OpenWebUIClient:
                 return [message for message in messages if isinstance(message, dict)]
 
         return []
+
+    @staticmethod
+    def _summarize_chat_response(response: Any) -> Dict[str, Any]:
+        summary: Dict[str, Any] = {"assistant_messages": []}
+        if not isinstance(response, dict):
+            summary["response_type"] = type(response).__name__
+            return summary
+
+        candidate_chats = [response]
+        chat = response.get("chat")
+        if isinstance(chat, dict):
+            candidate_chats.append(chat)
+
+        seen_ids = set()
+        for candidate in candidate_chats:
+            history = candidate.get("history") or {}
+            messages = history.get("messages") or {}
+            if isinstance(messages, dict):
+                for message_id, message in messages.items():
+                    if message_id in seen_ids or not isinstance(message, dict):
+                        continue
+                    seen_ids.add(message_id)
+                    if str(message.get("role") or "") == "assistant":
+                        summary["assistant_messages"].append(
+                            {
+                                "id": message_id,
+                                "content_preview": OpenWebUIClient._collect_text(
+                                    message.get("content")
+                                )[:120],
+                            }
+                        )
+
+        return summary
 
     @staticmethod
     def _collect_text(value: Any) -> str:
