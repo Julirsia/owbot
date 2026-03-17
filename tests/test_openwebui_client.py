@@ -146,8 +146,24 @@ class OpenWebUIClientTests(unittest.TestCase):
         )
 
         self.assertEqual(enriched["history"]["currentId"], "assistant-1")
+        self.assertEqual(enriched["history"]["current_id"], "assistant-1")
         self.assertIn("assistant-1", enriched["history"]["messages"])
         self.assertIn("assistant-1", enriched["history"]["messages"]["user-1"]["childrenIds"])
+
+    def test_extract_completed_messages_reads_chat_messages(self) -> None:
+        response = {
+            "chat": {
+                "messages": [
+                    {"id": "user-1", "role": "user", "content": "질문"},
+                    {"id": "assistant-1", "role": "assistant", "content": "답변"},
+                ]
+            }
+        }
+
+        self.assertEqual(
+            OpenWebUIClient._extract_completed_messages(response),
+            response["chat"]["messages"],
+        )
 
 
 if __name__ == "__main__":

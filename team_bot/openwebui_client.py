@@ -258,7 +258,6 @@ class OpenWebUIClient:
             assistant_message_id,
             session_id,
             model_id=str(payload["model"]),
-            content=immediate_text,
         )
         final_text = await self._wait_for_final_chat_message(chat_id, assistant_message_id)
         if final_text:
@@ -275,9 +274,10 @@ class OpenWebUIClient:
         session_id: str,
         *,
         model_id: str,
-        content: str,
     ) -> None:
         try:
+            chat_response = await self._request("GET", f"/api/v1/chats/{chat_id}")
+            completed_messages = self._extract_completed_messages(chat_response)
             await self._request(
                 "POST",
                 "/api/chat/completed",
@@ -286,10 +286,7 @@ class OpenWebUIClient:
                     "id": message_id,
                     "session_id": session_id,
                     "model": model_id,
-                    "message": {
-                        "role": "assistant",
-                        "content": content,
-                    },
+                    "messages": completed_messages,
                 },
             )
         except Exception:
@@ -470,6 +467,7 @@ class OpenWebUIClient:
         }
         history_messages[assistant_message_id] = assistant_entry
         history["messages"] = history_messages
+        history["current_id"] = assistant_message_id
         history["currentId"] = assistant_message_id
         enriched["history"] = history
 
@@ -489,7 +487,25 @@ class OpenWebUIClient:
             )
         enriched["messages"] = messages
         enriched["models"] = [model_id]
+        enriched["currentId"] = assistant_message_id
         return enriched
+
+    @staticmethod
+    def _extract_completed_messages(response: Any) -> List[Dict[str, Any]]:
+        if not isinstance(response, dict):
+            return []
+
+        candidate_chats = [response]
+        chat = response.get("chat")
+        if isinstance(chat, dict):
+            candidate_chats.append(chat)
+
+        for candidate in candidate_chats:
+            messages = candidate.get("messages")
+            if isinstance(messages, list):
+                return [message for message in messages if isinstance(message, dict)]
+
+        return []
 
     @staticmethod
     def _collect_text(value: Any) -> str:
