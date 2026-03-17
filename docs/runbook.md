@@ -76,6 +76,7 @@ python -m team_bot.main
 - `OPENWEBUI_SKILL_IDS`가 설정되어 있으면 completion 요청에 `skill_ids`를 함께 보냅니다.
 - `OPENWEBUI_TOOL_IDS`, `OPENWEBUI_TOOL_SERVER_IDS`, `OPENWEBUI_FEATURES_JSON`가 비어 있으면 해당 값들은 요청 바디에서 생략되고, 모델 UI에 저장된 기본 도구/기능 설정을 그대로 사용합니다.
 - 위 세 값을 env에 넣으면 모델 UI 설정보다 요청 바디 값이 우선합니다.
+- `OPENWEBUI_TOOL_IDS`를 직접 지정하면 그 요청은 `tool_ids`만 보내는 단순 모드로 처리됩니다. 이 경우 `terminal_id`, `skill_ids`, `tool_servers`, `features`는 함께 섞지 않습니다.
 - `OPENWEBUI_TOOL_TIMEOUT_SECONDS`는 tool/terminal 경로의 `/api/chat/completions` 요청 타임아웃입니다.
 - tool/terminal/MCP 경로도 별도 chat lifecycle을 흉내 내지 않고 `/api/chat/completions` 단일 응답을 그대로 사용합니다.
 

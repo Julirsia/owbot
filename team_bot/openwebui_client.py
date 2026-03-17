@@ -171,6 +171,7 @@ class OpenWebUIClient:
         tool_server_ids: List[str],
         features: Dict[str, object],
     ) -> str:
+        explicit_tool_ids_only = bool(tool_ids)
         use_native_function_calling = bool(
             terminal_id or skill_ids or tool_ids or tool_server_ids or features
         )
@@ -181,13 +182,13 @@ class OpenWebUIClient:
         }
         if tool_ids:
             payload["tool_ids"] = tool_ids
-        if tool_server_ids:
+        if tool_server_ids and not explicit_tool_ids_only:
             payload["tool_servers"] = tool_server_ids
-        if features:
+        if features and not explicit_tool_ids_only:
             payload["features"] = features
-        if terminal_id:
+        if terminal_id and not explicit_tool_ids_only:
             payload["terminal_id"] = terminal_id
-        if skill_ids:
+        if skill_ids and not explicit_tool_ids_only:
             payload["skill_ids"] = skill_ids
 
         if use_native_function_calling:
