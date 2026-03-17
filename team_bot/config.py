@@ -23,6 +23,12 @@ def _split_csv(value: str) -> List[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _parse_bool(value: str, default: bool = False) -> bool:
+    if not value:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _parse_json(value: str) -> Dict[str, object]:
     if not value:
         return {}
@@ -47,6 +53,9 @@ class BotConfig:
     completion_timeout_seconds: int
     state_db_path: Path
     log_level: str
+    socketio_debug: bool
+    log_raw_channel_events: bool
+    log_message_content: bool
 
     @classmethod
     def from_env(cls) -> "BotConfig":
@@ -80,4 +89,7 @@ class BotConfig:
             completion_timeout_seconds=int(os.getenv("COMPLETION_TIMEOUT_SECONDS", "60")),
             state_db_path=Path(os.getenv("STATE_DB_PATH", "/tmp/team-bot-state.db")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
+            socketio_debug=_parse_bool(os.getenv("SOCKETIO_DEBUG", "")),
+            log_raw_channel_events=_parse_bool(os.getenv("LOG_RAW_CHANNEL_EVENTS", "")),
+            log_message_content=_parse_bool(os.getenv("LOG_MESSAGE_CONTENT", "")),
         )

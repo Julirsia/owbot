@@ -74,6 +74,12 @@ class OpenWebUIClient:
             )
         return response
 
+    async def get_current_user(self) -> Dict[str, Any]:
+        response = await self._request("GET", "/api/v1/auths/")
+        if not isinstance(response, dict):
+            raise RuntimeError(f"GET /api/v1/auths/ returned non-dict response: {response!r}")
+        return response
+
     async def get_channel_message(self, channel_id: str, message_id: str) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/channels/{channel_id}/messages/{message_id}")
 

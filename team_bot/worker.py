@@ -10,7 +10,10 @@ from .config import BotConfig
 from .context_builder import (
     SYSTEM_PROMPT,
     build_invocation_context,
+    extract_mentions,
     message_invokes_bot,
+    message_mentions_bot,
+    message_mentions_bot_display_name,
 )
 from .openwebui_client import OpenWebUIClient
 from .state import SQLiteStateStore
@@ -23,7 +26,14 @@ class TeamBotWorker:
     def __init__(self, config: BotConfig) -> None:
         self.config = config
         self.state = SQLiteStateStore(config.state_db_path)
-        self.sio = socketio.AsyncClient(logger=False, engineio_logger=False, reconnection=True)
+        if config.socketio_debug:
+            logging.getLogger("socketio").setLevel(logging.DEBUG)
+            logging.getLogger("engineio").setLevel(logging.DEBUG)
+        self.sio = socketio.AsyncClient(
+            logger=config.socketio_debug,
+            engineio_logger=config.socketio_debug,
+            reconnection=True,
+        )
         self.client = OpenWebUIClient(
             config.base_url,
             config.bot_token,
@@ -35,7 +45,17 @@ class TeamBotWorker:
     def _register_handlers(self) -> None:
         @self.sio.event
         async def connect() -> None:
-            log.info("Connected to Open WebUI websocket")
+            log.info(
+                "Connected to Open WebUI websocket sid=%s base_url=%s",
+                self.sio.sid,
+                self.config.base_url,
+            )
+            log.info(
+                "Worker identity config bot_user_id=%r bot_display_name=%r model_id=%r",
+                self.config.bot_user_id,
+                self.config.bot_display_name,
+                self.config.model_id,
+            )
 
             async def join_callback(data: Optional[Dict[str, Any]] = None) -> None:
                 if data is not None:
@@ -49,15 +69,54 @@ class TeamBotWorker:
                 callback=join_callback,
             )
             try:
+                current_user = await self.client.get_current_user()
+                actual_user_id = str(current_user.get("id") or "")
+                actual_user_name = str(current_user.get("name") or "")
+                log.info(
+                    "Authenticated bot identity actual_user_id=%r actual_user_name=%r role=%r",
+                    actual_user_id,
+                    actual_user_name,
+                    current_user.get("role"),
+                )
+                if actual_user_id and actual_user_id != self.config.bot_user_id:
+                    log.warning(
+                        "Configured OPENWEBUI_BOT_USER_ID=%r does not match token owner id=%r",
+                        self.config.bot_user_id,
+                        actual_user_id,
+                    )
+                if (
+                    self.config.bot_display_name
+                    and actual_user_name
+                    and actual_user_name != self.config.bot_display_name
+                ):
+                    log.warning(
+                        "Configured OPENWEBUI_BOT_DISPLAY_NAME=%r does not match token owner name=%r",
+                        self.config.bot_display_name,
+                        actual_user_name,
+                    )
                 channels = await self.client.get_channels()
                 log.info("Bot can access %s channels", len(channels))
                 if not channels:
                     log.warning(
                         "Bot currently sees no channels. Check channel membership and features.channels permission."
                     )
+                else:
+                    channel_preview = [
+                        {
+                            "id": channel.get("id"),
+                            "name": channel.get("name"),
+                            "type": channel.get("type"),
+                        }
+                        for channel in channels[:10]
+                    ]
+                    log.info("Accessible channel preview: %s", channel_preview)
             except Exception:
                 log.exception("Failed to fetch accessible channels after websocket connect")
             self._start_heartbeat_loop()
+
+        @self.sio.event
+        async def connect_error(data: Any) -> None:
+            log.error("Socket connection error: %r", data)
 
         @self.sio.event
         async def disconnect() -> None:
@@ -66,6 +125,8 @@ class TeamBotWorker:
 
         @self.sio.on("events:channel")
         async def on_channel_event(event: Dict[str, Any]) -> None:
+            if self.config.log_raw_channel_events:
+                log.info("Raw events:channel payload: %s", self._safe_repr(event))
             event_type = ((event.get("data") or {}).get("type")) or "unknown"
             channel_id = event.get("channel_id")
             log.debug("Received channel event type=%s channel_id=%s", event_type, channel_id)
@@ -126,10 +187,25 @@ class TeamBotWorker:
 
         content = str(message.get("content") or "")
         log.debug(
-            "Message received id=%s user=%s content=%r",
+            "Message received id=%s parent_id=%s reply_to_id=%s user=%s role=%s",
             message.get("id"),
+            message.get("parent_id"),
+            message.get("reply_to_id"),
             user.get("name") or user.get("id"),
-            content,
+            user.get("role"),
+        )
+        if self.config.log_message_content:
+            log.info("Message content id=%s content=%r", message.get("id"), content)
+
+        structured_match = message_mentions_bot(content, self.config.bot_user_id)
+        display_match = message_mentions_bot_display_name(content, self.config.bot_display_name)
+        mentions = extract_mentions(content)
+        log.debug(
+            "Mention analysis id=%s structured_match=%s display_match=%s mentions=%s",
+            message.get("id"),
+            structured_match,
+            display_match,
+            mentions,
         )
         if not message_invokes_bot(
             content,
@@ -248,3 +324,10 @@ class TeamBotWorker:
             thread_messages=thread_messages,
             bot_user_id=self.config.bot_user_id,
         )
+
+    @staticmethod
+    def _safe_repr(value: Any, limit: int = 4000) -> str:
+        rendered = repr(value)
+        if len(rendered) > limit:
+            return rendered[: limit - 3] + "..."
+        return rendered
