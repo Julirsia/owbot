@@ -66,6 +66,7 @@ OPENWEBUI_BOT_EMAIL="bot@bot.com" \
 OPENWEBUI_BOT_PASSWORD="bot" \
 OPENWEBUI_BOT_USER_ID="actual-bot-user-id" \
 OPENWEBUI_BOT_DISPLAY_NAME="TEAM-BOT" \
+OPENWEBUI_FORCE_NATIVE_FUNCTION_CALLING="true" \
 OWBOT_TEST_USER_EMAIL="worker-test-user@local.test" \
 OWBOT_TEST_USER_PASSWORD="bot" \
 python scripts/run_channel_e2e.py

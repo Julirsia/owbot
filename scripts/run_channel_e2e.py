@@ -166,6 +166,20 @@ def print_result(name: str, message: Dict[str, Any]) -> None:
     print(f"[PASS] {name}: {preview}")
 
 
+def assert_successful_reply(message: Dict[str, Any]) -> None:
+    content = str(message.get("content") or "").strip()
+    if not content:
+        raise RuntimeError("Bot reply was empty")
+
+    failure_prefixes = (
+        "요청을 처리하지 못했습니다:",
+        "응답을 생성하지 못했습니다.",
+        "도구를 호출했지만 최종 텍스트 응답이 비어 있습니다.",
+    )
+    if any(content.startswith(prefix) for prefix in failure_prefixes):
+        raise RuntimeError(f"Bot reply indicates failure: {content}")
+
+
 def main() -> int:
     client = ApiClient(env("OPENWEBUI_BASE_URL"))
 
@@ -193,18 +207,17 @@ def main() -> int:
         token=str(test_auth["token"]),
         content=f"{mention} 사용 가능한 knowledge base를 알려줘.",
     )
-    print_result(
-        "top-level tool",
-        wait_for_reply(
-            client,
-            channel_id=channel_id,
-            token=str(test_auth["token"]),
-            bot_user_id=bot_user_id,
-            reply_to_id=str(top_tool["id"]),
-            parent_id=None,
-            timeout_seconds=timeout_seconds,
-        ),
+    top_tool_reply = wait_for_reply(
+        client,
+        channel_id=channel_id,
+        token=str(test_auth["token"]),
+        bot_user_id=bot_user_id,
+        reply_to_id=str(top_tool["id"]),
+        parent_id=None,
+        timeout_seconds=timeout_seconds,
     )
+    assert_successful_reply(top_tool_reply)
+    print_result("top-level tool", top_tool_reply)
 
     top_terminal = post_message(
         client,
@@ -212,18 +225,17 @@ def main() -> int:
         token=str(test_auth["token"]),
         content=f"{mention} 현재 작업 디렉터리와 파일 몇 개를 보여줘. 터미널을 사용해도 돼.",
     )
-    print_result(
-        "top-level terminal",
-        wait_for_reply(
-            client,
-            channel_id=channel_id,
-            token=str(test_auth["token"]),
-            bot_user_id=bot_user_id,
-            reply_to_id=str(top_terminal["id"]),
-            parent_id=None,
-            timeout_seconds=timeout_seconds,
-        ),
+    top_terminal_reply = wait_for_reply(
+        client,
+        channel_id=channel_id,
+        token=str(test_auth["token"]),
+        bot_user_id=bot_user_id,
+        reply_to_id=str(top_terminal["id"]),
+        parent_id=None,
+        timeout_seconds=timeout_seconds,
     )
+    assert_successful_reply(top_terminal_reply)
+    print_result("top-level terminal", top_terminal_reply)
 
     thread_root_tool = post_message(
         client,
@@ -239,18 +251,17 @@ def main() -> int:
         reply_to_id=str(thread_root_tool["id"]),
         parent_id=str(thread_root_tool["id"]),
     )
-    print_result(
-        "thread tool",
-        wait_for_reply(
-            client,
-            channel_id=channel_id,
-            token=str(test_auth["token"]),
-            bot_user_id=bot_user_id,
-            reply_to_id=str(thread_tool["id"]),
-            parent_id=str(thread_root_tool["id"]),
-            timeout_seconds=timeout_seconds,
-        ),
+    thread_tool_reply = wait_for_reply(
+        client,
+        channel_id=channel_id,
+        token=str(test_auth["token"]),
+        bot_user_id=bot_user_id,
+        reply_to_id=str(thread_tool["id"]),
+        parent_id=str(thread_root_tool["id"]),
+        timeout_seconds=timeout_seconds,
     )
+    assert_successful_reply(thread_tool_reply)
+    print_result("thread tool", thread_tool_reply)
 
     thread_root_terminal = post_message(
         client,
@@ -266,18 +277,17 @@ def main() -> int:
         reply_to_id=str(thread_root_terminal["id"]),
         parent_id=str(thread_root_terminal["id"]),
     )
-    print_result(
-        "thread terminal",
-        wait_for_reply(
-            client,
-            channel_id=channel_id,
-            token=str(test_auth["token"]),
-            bot_user_id=bot_user_id,
-            reply_to_id=str(thread_terminal["id"]),
-            parent_id=str(thread_root_terminal["id"]),
-            timeout_seconds=timeout_seconds,
-        ),
+    thread_terminal_reply = wait_for_reply(
+        client,
+        channel_id=channel_id,
+        token=str(test_auth["token"]),
+        bot_user_id=bot_user_id,
+        reply_to_id=str(thread_terminal["id"]),
+        parent_id=str(thread_root_terminal["id"]),
+        timeout_seconds=timeout_seconds,
     )
+    assert_successful_reply(thread_terminal_reply)
+    print_result("thread terminal", thread_terminal_reply)
 
     print("[DONE] channel/thread tool and terminal scenarios verified")
     return 0

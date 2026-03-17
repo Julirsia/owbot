@@ -53,10 +53,12 @@ class BotConfig:
     tool_ids: List[str]
     tool_server_ids: List[str]
     features: Dict[str, object]
+    force_native_function_calling: bool
     channel_context_limit: int
     thread_context_limit: int
     completion_timeout_seconds: int
     tool_timeout_seconds: int
+    startup_retry_seconds: int
     state_db_path: Path
     log_level: str
     socketio_debug: bool
@@ -98,10 +100,14 @@ class BotConfig:
             tool_ids=_split_csv(os.getenv("OPENWEBUI_TOOL_IDS", "")),
             tool_server_ids=_split_csv(os.getenv("OPENWEBUI_TOOL_SERVER_IDS", "")),
             features=_parse_json(os.getenv("OPENWEBUI_FEATURES_JSON", "")),
+            force_native_function_calling=_parse_bool(
+                os.getenv("OPENWEBUI_FORCE_NATIVE_FUNCTION_CALLING", "")
+            ),
             channel_context_limit=int(os.getenv("CHANNEL_CONTEXT_LIMIT", "20")),
             thread_context_limit=int(os.getenv("THREAD_CONTEXT_LIMIT", "50")),
             completion_timeout_seconds=int(os.getenv("COMPLETION_TIMEOUT_SECONDS", "60")),
             tool_timeout_seconds=int(os.getenv("OPENWEBUI_TOOL_TIMEOUT_SECONDS", "300")),
+            startup_retry_seconds=int(os.getenv("OPENWEBUI_STARTUP_RETRY_SECONDS", "5")),
             state_db_path=Path(os.getenv("STATE_DB_PATH", "/tmp/team-bot-state.db")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             socketio_debug=_parse_bool(os.getenv("SOCKETIO_DEBUG", "")),

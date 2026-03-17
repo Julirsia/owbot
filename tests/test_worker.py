@@ -23,10 +23,12 @@ def make_config(*, terminal_id: str = "") -> BotConfig:
         tool_ids=[],
         tool_server_ids=[],
         features={},
+        force_native_function_calling=False,
         channel_context_limit=20,
         thread_context_limit=50,
         completion_timeout_seconds=30,
         tool_timeout_seconds=60,
+        startup_retry_seconds=1,
         state_db_path=Path(temp_dir) / "state.db",
         log_level="INFO",
         socketio_debug=False,
@@ -85,6 +87,36 @@ class TeamBotWorkerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(future.done())
         self.assertIs(future.exception(), error)
+
+    async def test_handle_disconnect_fails_pending_completions_and_startup_future(self) -> None:
+        worker = TeamBotWorker(make_config())
+        worker._startup_ready = asyncio.get_running_loop().create_future()
+        future = asyncio.get_running_loop().create_future()
+        worker._pending_completions[("chat", "message")] = PendingCompletion(future=future)
+
+        await worker._handle_disconnect()
+
+        self.assertTrue(future.done())
+        self.assertIsInstance(future.exception(), RuntimeError)
+        self.assertTrue(worker._startup_ready.done())
+        self.assertIsInstance(worker._startup_ready.exception(), RuntimeError)
+
+    async def test_run_startup_checks_respects_force_native_function_calling(self) -> None:
+        worker = TeamBotWorker(make_config())
+        object.__setattr__(worker.config, "force_native_function_calling", True)
+
+        class DummyClient:
+            async def get_model(self, model_id: str):
+                return {"id": model_id, "params": {}, "meta": {}}
+
+            async def probe_terminal_connection(self, terminal_id: str):
+                raise AssertionError("terminal probe should not be called")
+
+        worker.client = DummyClient()  # type: ignore[assignment]
+
+        await worker._run_startup_checks()
+
+        self.assertTrue(worker._model_uses_native_tools)
 
 
 if __name__ == "__main__":

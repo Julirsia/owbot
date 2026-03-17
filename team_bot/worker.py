@@ -148,15 +148,7 @@ class TeamBotWorker:
 
         @self.sio.event
         async def disconnect() -> None:
-            log.warning("Disconnected from Open WebUI websocket")
-            self._fail_pending_completions(
-                RuntimeError("Open WebUI websocket disconnected while a completion was in progress")
-            )
-            if self._startup_ready is not None and not self._startup_ready.done():
-                self._startup_ready.set_exception(
-                    RuntimeError("Open WebUI websocket disconnected during startup")
-                )
-            await self._stop_heartbeat_loop()
+            await self._handle_disconnect()
 
         async def on_channel_event(event_name: str, event: Dict[str, Any]) -> None:
             if self.config.log_raw_channel_events:
@@ -196,21 +188,37 @@ class TeamBotWorker:
 
     async def run(self) -> None:
         async with self.client:
-            self._startup_ready = asyncio.get_running_loop().create_future()
-            self._ws_token = await self._resolve_websocket_token()
-            await self.sio.connect(
-                self.config.base_url,
-                socketio_path="/ws/socket.io",
-                transports=["websocket"],
-                auth={"token": self._ws_token},
-            )
-            await self._startup_ready
-            await self.sio.wait()
+            while True:
+                self._startup_ready = asyncio.get_running_loop().create_future()
+                try:
+                    self._ws_token = await self._resolve_websocket_token()
+                    await self.sio.connect(
+                        self.config.base_url,
+                        socketio_path="/ws/socket.io",
+                        transports=["websocket"],
+                        auth={"token": self._ws_token},
+                    )
+                    await self._startup_ready
+                    await self.sio.wait()
+                    log.warning("Websocket wait returned unexpectedly, restarting connection loop")
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception(
+                        "Worker run loop failed, retrying in %s seconds",
+                        self.config.startup_retry_seconds,
+                    )
+                finally:
+                    if self.sio.connected:
+                        await self.sio.disconnect()
+                await asyncio.sleep(self.config.startup_retry_seconds)
 
     async def _run_startup_checks(self) -> None:
         model = await self.client.get_model(self.config.model_id)
         self._model_info = model
-        self._model_uses_native_tools = self._detect_native_tools(model)
+        self._model_uses_native_tools = bool(
+            self.config.force_native_function_calling or self._detect_native_tools(model)
+        )
 
         meta = model.get("meta") or {}
         builtin_tools = meta.get("builtinTools") or {}
@@ -236,6 +244,17 @@ class TeamBotWorker:
                 terminal_probe.get("cwd"),
                 terminal_probe.get("ports"),
             )
+
+    async def _handle_disconnect(self) -> None:
+        log.warning("Disconnected from Open WebUI websocket")
+        self._fail_pending_completions(
+            RuntimeError("Open WebUI websocket disconnected while a completion was in progress")
+        )
+        if self._startup_ready is not None and not self._startup_ready.done():
+            self._startup_ready.set_exception(
+                RuntimeError("Open WebUI websocket disconnected during startup")
+            )
+        await self._stop_heartbeat_loop()
 
     @staticmethod
     def _detect_native_tools(model: Dict[str, Any]) -> bool:
@@ -548,6 +567,7 @@ class TeamBotWorker:
             or self.config.tool_ids
             or self.config.tool_server_ids
             or self.config.features
+            or self.config.force_native_function_calling
             or self._model_uses_native_tools
         )
 
