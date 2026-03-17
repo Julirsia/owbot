@@ -33,6 +33,8 @@
 - `CHANNEL_CONTEXT_LIMIT`
 - `THREAD_CONTEXT_LIMIT`
 - `COMPLETION_TIMEOUT_SECONDS`
+- `OPENWEBUI_TOOL_TIMEOUT_SECONDS`
+- `OPENWEBUI_FINAL_MESSAGE_WAIT_SECONDS`
 - `STATE_DB_PATH`
 - `LOG_LEVEL`
 
@@ -54,6 +56,8 @@ export OPENWEBUI_FEATURES_JSON='{"web_search": true, "image_generation": false, 
 export CHANNEL_CONTEXT_LIMIT="20"
 export THREAD_CONTEXT_LIMIT="50"
 export COMPLETION_TIMEOUT_SECONDS="60"
+export OPENWEBUI_TOOL_TIMEOUT_SECONDS="300"
+export OPENWEBUI_FINAL_MESSAGE_WAIT_SECONDS="60"
 export STATE_DB_PATH="/tmp/team-bot-state.db"
 ```
 
@@ -74,6 +78,8 @@ python -m team_bot.main
 - `OPENWEBUI_SKILL_IDS`가 설정되어 있으면 completion 요청에 `skill_ids`를 함께 보냅니다.
 - `OPENWEBUI_TOOL_IDS`, `OPENWEBUI_TOOL_SERVER_IDS`, `OPENWEBUI_FEATURES_JSON`가 비어 있으면 해당 값들은 요청 바디에서 생략되고, 모델 UI에 저장된 기본 도구/기능 설정을 그대로 사용합니다.
 - 위 세 값을 env에 넣으면 모델 UI 설정보다 요청 바디 값이 우선합니다.
+- `OPENWEBUI_TOOL_TIMEOUT_SECONDS`는 tool/terminal 경로의 `/api/chat/completions` 요청 타임아웃입니다.
+- `OPENWEBUI_FINAL_MESSAGE_WAIT_SECONDS`는 tool 실행 후 최종 assistant 메시지를 chat에서 기다리는 최대 시간입니다.
 
 ## 5. 장애 대응
 

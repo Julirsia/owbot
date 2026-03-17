@@ -39,6 +39,8 @@ class TeamBotWorker:
             config.base_url,
             config.bot_token,
             timeout_seconds=config.completion_timeout_seconds,
+            tool_timeout_seconds=config.tool_timeout_seconds,
+            final_message_wait_seconds=config.final_message_wait_seconds,
         )
         self._heartbeat_task: Optional[asyncio.Task[Any]] = None
         self._ws_token = config.bot_session_token or ""

@@ -17,12 +17,21 @@ log = logging.getLogger(__name__)
 
 
 class OpenWebUIClient:
-    def __init__(self, base_url: str, token: str, timeout_seconds: int) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        timeout_seconds: int,
+        tool_timeout_seconds: int,
+        final_message_wait_seconds: int,
+    ) -> None:
         if aiohttp is None:
             raise RuntimeError("aiohttp is required to use OpenWebUIClient")
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        self.tool_timeout_seconds = tool_timeout_seconds
+        self.final_message_wait_seconds = final_message_wait_seconds
         self._session: Optional[aiohttp.ClientSession] = None
 
     @property
@@ -49,21 +58,35 @@ class OpenWebUIClient:
         path: str,
         *,
         json_body: Optional[Dict[str, Any]] = None,
+        timeout_seconds: Optional[int] = None,
     ) -> Any:
         url = f"{self.base_url}{path}"
-        async with self.session.request(method, url, json=json_body) as response:
-            raw_text = await response.text()
-            data: Any
-            if not raw_text.strip():
-                data = None
-            else:
-                try:
-                    data = json.loads(raw_text)
-                except json.JSONDecodeError:
-                    data = raw_text
-            if response.status >= 400:
-                raise RuntimeError(f"{method} {path} failed with {response.status}: {data}")
-            return data
+        request_timeout = None
+        if timeout_seconds is not None:
+            request_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        try:
+            async with self.session.request(
+                method,
+                url,
+                json=json_body,
+                timeout=request_timeout,
+            ) as response:
+                raw_text = await response.text()
+                data: Any
+                if not raw_text.strip():
+                    data = None
+                else:
+                    try:
+                        data = json.loads(raw_text)
+                    except json.JSONDecodeError:
+                        data = raw_text
+                if response.status >= 400:
+                    raise RuntimeError(f"{method} {path} failed with {response.status}: {data}")
+                return data
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(
+                f"{method} {path} timed out after {timeout_seconds or self.timeout.total} seconds"
+            ) from exc
 
     async def get_channel_messages(self, channel_id: str, limit: int) -> List[Dict[str, Any]]:
         return await self._request(
@@ -171,6 +194,7 @@ class OpenWebUIClient:
                 "POST",
                 "/api/chat/completions",
                 json_body=payload,
+                timeout_seconds=self.tool_timeout_seconds,
             )
             immediate_text = self._extract_message_text_or_empty(initial_response)
             tool_names = self._extract_tool_names(initial_response)
@@ -269,6 +293,7 @@ class OpenWebUIClient:
             "POST",
             "/api/chat/completions",
             json_body=stateful_payload,
+            timeout_seconds=self.tool_timeout_seconds,
         )
         immediate_text = self._extract_message_text_or_empty(completion_response)
         log.debug(
@@ -325,7 +350,8 @@ class OpenWebUIClient:
         timeout_seconds: float = 15.0,
         poll_interval_seconds: float = 0.5,
     ) -> str:
-        deadline = time.monotonic() + timeout_seconds
+        effective_timeout_seconds = max(timeout_seconds, float(self.final_message_wait_seconds))
+        deadline = time.monotonic() + effective_timeout_seconds
         last_error: Optional[Exception] = None
 
         while time.monotonic() < deadline:
