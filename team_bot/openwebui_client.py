@@ -80,6 +80,19 @@ class OpenWebUIClient:
             raise RuntimeError(f"GET /api/v1/auths/ returned non-dict response: {response!r}")
         return response
 
+    async def sign_in(self, email: str, password: str) -> str:
+        response = await self._request(
+            "POST",
+            "/api/v1/auths/signin",
+            json_body={"email": email, "password": password},
+        )
+        if not isinstance(response, dict):
+            raise RuntimeError(f"POST /api/v1/auths/signin returned non-dict response: {response!r}")
+        token = response.get("token")
+        if not isinstance(token, str) or not token.strip():
+            raise RuntimeError(f"POST /api/v1/auths/signin returned no token: {response!r}")
+        return token.strip()
+
     async def get_channel_message(self, channel_id: str, message_id: str) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/channels/{channel_id}/messages/{message_id}")
 

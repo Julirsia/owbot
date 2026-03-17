@@ -4,6 +4,7 @@
 
 - Open WebUI에서 `TEAM-BOT` 계정이 실제로 채널 멤버인지
 - `OPENWEBUI_BOT_TOKEN`이 그 계정의 토큰인지
+- `OPENWEBUI_BOT_TOKEN`이 `sk-...` API 키라면 websocket 수신용으로 `OPENWEBUI_BOT_SESSION_TOKEN` 또는 `OPENWEBUI_BOT_EMAIL` / `OPENWEBUI_BOT_PASSWORD`도 설정했는지
 - `OPENWEBUI_BOT_USER_ID`가 실제 사용자 id와 일치하는지
 - 봇이 사용할 모델 id가 Open WebUI에 존재하는지
 

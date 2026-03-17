@@ -41,6 +41,7 @@ class TeamBotWorker:
             timeout_seconds=config.completion_timeout_seconds,
         )
         self._heartbeat_task: Optional[asyncio.Task[Any]] = None
+        self._ws_token = config.bot_session_token or ""
         self._register_handlers()
 
     def _register_handlers(self) -> None:
@@ -66,7 +67,7 @@ class TeamBotWorker:
 
             await self.sio.emit(
                 "user-join",
-                {"auth": {"token": self.config.bot_token}},
+                {"auth": {"token": self._ws_token}},
                 callback=join_callback,
             )
             try:
@@ -154,10 +155,12 @@ class TeamBotWorker:
 
     async def run(self) -> None:
         async with self.client:
+            self._ws_token = await self._resolve_websocket_token()
             await self.sio.connect(
                 self.config.base_url,
                 socketio_path="/ws/socket.io",
                 transports=["websocket"],
+                auth={"token": self._ws_token},
             )
             await self.sio.wait()
 
@@ -183,12 +186,29 @@ class TeamBotWorker:
                 await self.sio.emit("heartbeat", {})
                 await self.sio.emit(
                     "join-channels",
-                    {"auth": {"token": self.config.bot_token}},
+                    {"auth": {"token": self._ws_token}},
                 )
                 log.debug("Sent heartbeat and join-channels")
                 await asyncio.sleep(30)
         except asyncio.CancelledError:
             raise
+
+    async def _resolve_websocket_token(self) -> str:
+        if self.config.bot_session_token:
+            log.info("Using OPENWEBUI_BOT_SESSION_TOKEN for websocket authentication")
+            return self.config.bot_session_token
+
+        if self.config.bot_email and self.config.bot_password:
+            log.info("Signing in with OPENWEBUI_BOT_EMAIL to acquire websocket session token")
+            return await self.client.sign_in(self.config.bot_email, self.config.bot_password)
+
+        if self.config.bot_token.startswith("sk-"):
+            log.warning(
+                "OPENWEBUI_BOT_TOKEN looks like an API key. Open WebUI websocket auth expects a JWT session token."
+            )
+        else:
+            log.info("Using OPENWEBUI_BOT_TOKEN for websocket authentication")
+        return self.config.bot_token
 
     async def handle_channel_event(self, event: Dict[str, Any]) -> None:
         event_data = event.get("data") or {}

@@ -42,6 +42,9 @@ def _parse_json(value: str) -> Dict[str, object]:
 class BotConfig:
     base_url: str
     bot_token: str
+    bot_session_token: str
+    bot_email: str
+    bot_password: str
     bot_user_id: str
     bot_display_name: str
     model_id: str
@@ -61,6 +64,9 @@ class BotConfig:
     def from_env(cls) -> "BotConfig":
         base_url = os.getenv("OPENWEBUI_BASE_URL", "").rstrip("/")
         bot_token = os.getenv("OPENWEBUI_BOT_TOKEN", "")
+        bot_session_token = os.getenv("OPENWEBUI_BOT_SESSION_TOKEN", "")
+        bot_email = os.getenv("OPENWEBUI_BOT_EMAIL", "")
+        bot_password = os.getenv("OPENWEBUI_BOT_PASSWORD", "")
         bot_user_id = os.getenv("OPENWEBUI_BOT_USER_ID", "")
 
         missing = [
@@ -78,6 +84,9 @@ class BotConfig:
         return cls(
             base_url=base_url,
             bot_token=bot_token,
+            bot_session_token=bot_session_token,
+            bot_email=bot_email,
+            bot_password=bot_password,
             bot_user_id=bot_user_id,
             bot_display_name=os.getenv("OPENWEBUI_BOT_DISPLAY_NAME", "TEAM-BOT"),
             model_id=os.getenv("OPENWEBUI_MODEL_ID", "gpt-5-mini"),
