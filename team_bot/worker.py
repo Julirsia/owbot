@@ -37,8 +37,11 @@ class TeamBotWorker:
         async def connect() -> None:
             log.info("Connected to Open WebUI websocket")
 
-            async def join_callback(data: Dict[str, Any]) -> None:
-                log.info("Authenticated as %s", data)
+            async def join_callback(data: Optional[Dict[str, Any]] = None) -> None:
+                if data is not None:
+                    log.info("Authenticated as %s", data)
+                else:
+                    log.info("Authenticated without callback payload")
 
             await self.sio.emit(
                 "user-join",
