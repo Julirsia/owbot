@@ -6,6 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - runtime dependency loaded via requirements
+    def load_dotenv(*args, **kwargs):  # type: ignore[override]
+        return False
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / ".env", override=False)
+
 
 def _split_csv(value: str) -> List[str]:
     if not value:
