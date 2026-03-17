@@ -59,6 +59,8 @@ class BotConfig:
     completion_timeout_seconds: int
     tool_timeout_seconds: int
     startup_retry_seconds: int
+    state_retention_seconds: int
+    state_cleanup_interval_seconds: int
     state_db_path: Path
     log_level: str
     socketio_debug: bool
@@ -108,6 +110,10 @@ class BotConfig:
             completion_timeout_seconds=int(os.getenv("COMPLETION_TIMEOUT_SECONDS", "60")),
             tool_timeout_seconds=int(os.getenv("OPENWEBUI_TOOL_TIMEOUT_SECONDS", "300")),
             startup_retry_seconds=int(os.getenv("OPENWEBUI_STARTUP_RETRY_SECONDS", "5")),
+            state_retention_seconds=int(os.getenv("STATE_RETENTION_SECONDS", "604800")),
+            state_cleanup_interval_seconds=int(
+                os.getenv("STATE_CLEANUP_INTERVAL_SECONDS", "3600")
+            ),
             state_db_path=Path(os.getenv("STATE_DB_PATH", "/tmp/team-bot-state.db")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             socketio_debug=_parse_bool(os.getenv("SOCKETIO_DEBUG", "")),

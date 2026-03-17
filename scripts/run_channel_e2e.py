@@ -180,6 +180,12 @@ def assert_successful_reply(message: Dict[str, Any]) -> None:
         raise RuntimeError(f"Bot reply indicates failure: {content}")
 
 
+def assert_reply_contains(message: Dict[str, Any], needle: str, *, label: str) -> None:
+    content = str(message.get("content") or "").strip()
+    if needle not in content:
+        raise RuntimeError(f"{label} reply did not contain expected text {needle!r}: {content}")
+
+
 def main() -> int:
     client = ApiClient(env("OPENWEBUI_BASE_URL"))
 
@@ -200,6 +206,8 @@ def main() -> int:
 
     mention = f"<@U:{bot_user_id}|{bot_display_name}>"
     timeout_seconds = int(os.getenv("OWBOT_E2E_TIMEOUT_SECONDS", "120"))
+    skill_name = os.getenv("OWBOT_TEST_SKILL_NAME", "").strip()
+    skill_expected_text = os.getenv("OWBOT_TEST_SKILL_EXPECTED_TEXT", "").strip()
 
     top_tool = post_message(
         client,
@@ -289,7 +297,66 @@ def main() -> int:
     assert_successful_reply(thread_terminal_reply)
     print_result("thread terminal", thread_terminal_reply)
 
-    print("[DONE] channel/thread tool and terminal scenarios verified")
+    if skill_name:
+        top_skill = post_message(
+            client,
+            channel_id=channel_id,
+            token=str(test_auth["token"]),
+            content=(
+                f"{mention} ${skill_name} 스킬을 실행해서 나온 결과를 그대로 알려줘. "
+                "가능하면 추가 설명 없이 핵심 결과만 말해줘."
+            ),
+        )
+        top_skill_reply = wait_for_reply(
+            client,
+            channel_id=channel_id,
+            token=str(test_auth["token"]),
+            bot_user_id=bot_user_id,
+            reply_to_id=str(top_skill["id"]),
+            parent_id=None,
+            timeout_seconds=timeout_seconds,
+        )
+        assert_successful_reply(top_skill_reply)
+        if skill_expected_text:
+            assert_reply_contains(top_skill_reply, skill_expected_text, label="top-level skill")
+        print_result("top-level skill", top_skill_reply)
+
+        thread_root_skill = post_message(
+            client,
+            channel_id=channel_id,
+            token=str(test_auth["token"]),
+            content="thread skill validation root",
+        )
+        thread_skill = post_message(
+            client,
+            channel_id=channel_id,
+            token=str(test_auth["token"]),
+            content=(
+                f"{mention} ${skill_name} 스킬을 실행해서 나온 결과를 그대로 알려줘. "
+                "필요하면 스레드 문맥을 참고하되 결과 문자열은 빠뜨리지 마."
+            ),
+            reply_to_id=str(thread_root_skill["id"]),
+            parent_id=str(thread_root_skill["id"]),
+        )
+        thread_skill_reply = wait_for_reply(
+            client,
+            channel_id=channel_id,
+            token=str(test_auth["token"]),
+            bot_user_id=bot_user_id,
+            reply_to_id=str(thread_skill["id"]),
+            parent_id=str(thread_root_skill["id"]),
+            timeout_seconds=timeout_seconds,
+        )
+        assert_successful_reply(thread_skill_reply)
+        if skill_expected_text:
+            assert_reply_contains(
+                thread_skill_reply,
+                skill_expected_text,
+                label="thread skill",
+            )
+        print_result("thread skill", thread_skill_reply)
+
+    print("[DONE] channel/thread tool, terminal, and optional skill scenarios verified")
     return 0
 
 

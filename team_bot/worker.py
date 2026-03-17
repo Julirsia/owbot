@@ -34,7 +34,11 @@ class PendingCompletion:
 class TeamBotWorker:
     def __init__(self, config: BotConfig) -> None:
         self.config = config
-        self.state = SQLiteStateStore(config.state_db_path)
+        self.state = SQLiteStateStore(
+            config.state_db_path,
+            retention_seconds=config.state_retention_seconds,
+            cleanup_interval_seconds=config.state_cleanup_interval_seconds,
+        )
         self._bot_user_id = config.bot_user_id
         self._bot_display_name = config.bot_display_name
         self._model_info: Optional[Dict[str, Any]] = None

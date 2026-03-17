@@ -49,6 +49,8 @@
 - `COMPLETION_TIMEOUT_SECONDS`
 - `OPENWEBUI_TOOL_TIMEOUT_SECONDS`
 - `OPENWEBUI_STARTUP_RETRY_SECONDS`
+- `STATE_RETENTION_SECONDS`
+- `STATE_CLEANUP_INTERVAL_SECONDS`
 - `STATE_DB_PATH`
 - `LOG_LEVEL`
 - `SOCKETIO_DEBUG`
@@ -76,6 +78,8 @@ export THREAD_CONTEXT_LIMIT="50"
 export COMPLETION_TIMEOUT_SECONDS="60"
 export OPENWEBUI_TOOL_TIMEOUT_SECONDS="300"
 export OPENWEBUI_STARTUP_RETRY_SECONDS="5"
+export STATE_RETENTION_SECONDS="604800"
+export STATE_CLEANUP_INTERVAL_SECONDS="3600"
 export STATE_DB_PATH="/var/lib/team-bot/state.db"
 export LOG_LEVEL="INFO"
 ```
@@ -86,6 +90,7 @@ export LOG_LEVEL="INFO"
 - `OPENWEBUI_TOOL_IDS`를 직접 지정하면 그 요청은 `tool_ids`만 보내는 단순 모드가 되고, `terminal_id`, `skill_ids`, `tool_servers`, `features`는 같은 요청에 섞지 않습니다.
 - `OPENWEBUI_TOOL_IDS`, `OPENWEBUI_TOOL_SERVER_IDS`, `OPENWEBUI_FEATURES_JSON`가 비어 있으면 모델 UI에 저장된 기본 도구 설정을 그대로 사용합니다.
 - `/api/models`가 model preset 메타를 충분히 주지 않는 환경이면 `OPENWEBUI_FORCE_NATIVE_FUNCTION_CALLING=true`로 강제하는 편이 안전합니다.
+- 중복 이벤트 dedupe는 `STATE_RETENTION_SECONDS` 동안만 유지하고, `STATE_CLEANUP_INTERVAL_SECONDS`마다 만료 레코드를 자동 삭제합니다.
 
 ## 4. Open Terminal URL 규칙
 
@@ -168,7 +173,7 @@ python -m team_bot.main
 
 - 전제: 워커가 이미 실행 중이어야 합니다.
 - 입력: bot 계정, 테스트 사용자 계정, bot user id
-- 동작: 임시 그룹 채널 생성 후 메인 채널 / 스레드의 tool / terminal 4개 시나리오를 순서대로 확인
+- 동작: 임시 그룹 채널 생성 후 메인 채널 / 스레드의 tool / terminal 시나리오를 확인하고, `OWBOT_TEST_SKILL_NAME`이 주어지면 `$스킬` 시나리오도 함께 확인
 
 ## 9. 채널 / 스레드 E2E 검증 매트릭스
 
@@ -185,6 +190,9 @@ python -m team_bot.main
 3. terminal 호출
    - 예: `@TEAM-BOT 현재 시스템에서 실행 중인 프로세스를 확인해줘. 가능하면 터미널을 사용해.`
    - 기대 결과: terminal tool이 실행되고 최종 요약 답변이 메인 채널에 게시됨
+4. skill 호출
+   - 예: `@TEAM-BOT $terminal-file-check 스킬을 실행해서 나온 결과를 그대로 알려줘`
+   - 기대 결과: skill 지침과 연결된 terminal script 결과가 메인 채널에 게시됨
 
 ### B. 스레드 멘션
 
@@ -197,6 +205,9 @@ python -m team_bot.main
 3. terminal 호출
    - 스레드 안에서 terminal이 필요한 요청
    - 기대 결과: 같은 스레드에서 terminal tool 실행 후 최종 자연어 답변까지 이어짐
+4. skill 호출
+   - 스레드 안에서 `$스킬명`을 포함한 요청
+   - 기대 결과: 같은 스레드에서 skill 지침과 연결된 terminal script 결과까지 포함해 응답
 
 검증 기준:
 
@@ -206,11 +217,13 @@ python -m team_bot.main
 
 로컬 참고 결과:
 
-- 2026-03-17 로컬 Docker 검증에서는 아래 네 가지가 실제 통과했습니다.
+- 2026-03-17 로컬 Docker 검증에서는 아래 여섯 가지가 실제 통과했습니다.
 - 메인 채널 멘션 + knowledge tool 응답
 - 메인 채널 멘션 + Open Terminal 응답
 - 스레드 멘션 + knowledge tool 응답
 - 스레드 멘션 + Open Terminal 응답
+- 메인 채널 멘션 + `$terminal-file-check` skill 응답 (`TERMINAL_SKILL_OK`)
+- 스레드 멘션 + `$terminal-file-check` skill 응답 (`TERMINAL_SKILL_OK`)
 - 이 결과는 로컬 검증 참고용입니다. 실제 운영 환경에서는 같은 항목을 다시 검증해야 합니다.
 
 ## 10. 운영 검증 시 로그 포인트
