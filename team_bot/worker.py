@@ -51,7 +51,10 @@ class TeamBotWorker:
         self.sio = socketio.AsyncClient(
             logger=config.socketio_debug,
             engineio_logger=config.socketio_debug,
-            reconnection=True,
+            # Reconnect is managed by TeamBotWorker.run(); enabling both the
+            # socketio client's internal reconnect loop and our outer retry
+            # loop can cause "Already connected" races in a single process.
+            reconnection=False,
         )
         self.client = OpenWebUIClient(
             config.base_url,
