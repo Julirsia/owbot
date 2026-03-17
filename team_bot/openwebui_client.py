@@ -240,19 +240,16 @@ class OpenWebUIClient:
                 "chat_id": chat_id,
                 "id": assistant_message_id,
                 "session_id": session_id,
+                "stream": True,
                 "background_tasks": {
                     "title_generation": False,
                     "tags_generation": False,
+                    "follow_up_generation": False,
                 },
             }
         )
 
-        completion_response = await self._request(
-            "POST",
-            "/api/chat/completions",
-            json_body=stateful_payload,
-        )
-        immediate_text = self._extract_message_text_or_empty(completion_response)
+        await self._drain_stream_completion(stateful_payload)
         await self._notify_chat_completed(
             chat_id,
             assistant_message_id,
@@ -262,10 +259,36 @@ class OpenWebUIClient:
         final_text = await self._wait_for_final_chat_message(chat_id, assistant_message_id)
         if final_text:
             return final_text
-        if immediate_text:
-            return immediate_text
 
         raise RuntimeError("Tool-enabled completion finished without a final assistant message")
+
+    async def _drain_stream_completion(self, payload: Dict[str, Any]) -> None:
+        url = f"{self.base_url}/api/chat/completions"
+
+        async with self.session.post(url, json=payload) as response:
+            if response.status >= 400:
+                raw_text = await response.text()
+                raise RuntimeError(
+                    f"POST /api/chat/completions failed with {response.status}: {raw_text}"
+                )
+
+            saw_data = False
+            while True:
+                raw_line = await response.content.readline()
+                if not raw_line:
+                    break
+
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+
+                saw_data = True
+                data = line[len("data:") :].strip()
+                if data == "[DONE]":
+                    break
+
+            if not saw_data:
+                log.debug("Tool-enabled streaming completion ended without SSE data chunks")
 
     async def _notify_chat_completed(
         self,
