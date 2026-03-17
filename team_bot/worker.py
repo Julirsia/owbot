@@ -37,7 +37,10 @@ class TeamBotWorker:
         self.state = SQLiteStateStore(config.state_db_path)
         self._bot_user_id = config.bot_user_id
         self._bot_display_name = config.bot_display_name
+        self._model_info: Optional[Dict[str, Any]] = None
+        self._model_uses_native_tools = False
         self._pending_completions: Dict[Tuple[str, str], PendingCompletion] = {}
+        self._startup_ready: Optional[asyncio.Future[None]] = None
         if config.socketio_debug:
             logging.getLogger("socketio").setLevel(logging.DEBUG)
             logging.getLogger("engineio").setLevel(logging.DEBUG)
@@ -128,8 +131,15 @@ class TeamBotWorker:
                         for channel in channels[:10]
                     ]
                     log.info("Accessible channel preview: %s", channel_preview)
-            except Exception:
+                await self._run_startup_checks()
+            except Exception as exc:
+                if self._startup_ready is not None and not self._startup_ready.done():
+                    self._startup_ready.set_exception(exc)
                 log.exception("Failed to fetch accessible channels after websocket connect")
+                await self.sio.disconnect()
+                return
+            if self._startup_ready is not None and not self._startup_ready.done():
+                self._startup_ready.set_result(None)
             self._start_heartbeat_loop()
 
         @self.sio.event
@@ -139,6 +149,13 @@ class TeamBotWorker:
         @self.sio.event
         async def disconnect() -> None:
             log.warning("Disconnected from Open WebUI websocket")
+            self._fail_pending_completions(
+                RuntimeError("Open WebUI websocket disconnected while a completion was in progress")
+            )
+            if self._startup_ready is not None and not self._startup_ready.done():
+                self._startup_ready.set_exception(
+                    RuntimeError("Open WebUI websocket disconnected during startup")
+                )
             await self._stop_heartbeat_loop()
 
         async def on_channel_event(event_name: str, event: Dict[str, Any]) -> None:
@@ -179,6 +196,7 @@ class TeamBotWorker:
 
     async def run(self) -> None:
         async with self.client:
+            self._startup_ready = asyncio.get_running_loop().create_future()
             self._ws_token = await self._resolve_websocket_token()
             await self.sio.connect(
                 self.config.base_url,
@@ -186,7 +204,66 @@ class TeamBotWorker:
                 transports=["websocket"],
                 auth={"token": self._ws_token},
             )
+            await self._startup_ready
             await self.sio.wait()
+
+    async def _run_startup_checks(self) -> None:
+        model = await self.client.get_model(self.config.model_id)
+        self._model_info = model
+        self._model_uses_native_tools = self._detect_native_tools(model)
+
+        meta = model.get("meta") or {}
+        builtin_tools = meta.get("builtinTools") or {}
+        enabled_builtin_tools = sorted(
+            key for key, enabled in builtin_tools.items() if enabled
+        ) if isinstance(builtin_tools, dict) else []
+        skill_ids = meta.get("skillIds") or []
+
+        log.info(
+            "Startup model check passed model_id=%s base_model_id=%s native_tools=%s builtin_tools=%s skill_ids=%s",
+            model.get("id"),
+            model.get("base_model_id"),
+            self._model_uses_native_tools,
+            enabled_builtin_tools,
+            skill_ids,
+        )
+
+        if self.config.terminal_id:
+            terminal_probe = await self.client.probe_terminal_connection(self.config.terminal_id)
+            log.info(
+                "Startup terminal check passed terminal_id=%s cwd=%s ports=%s",
+                self.config.terminal_id,
+                terminal_probe.get("cwd"),
+                terminal_probe.get("ports"),
+            )
+
+    @staticmethod
+    def _detect_native_tools(model: Dict[str, Any]) -> bool:
+        params = model.get("params") or {}
+        if isinstance(params, dict) and params.get("function_calling") == "native":
+            return True
+
+        meta = model.get("meta") or {}
+        if not isinstance(meta, dict):
+            return False
+
+        skill_ids = meta.get("skillIds") or []
+        if isinstance(skill_ids, list) and any(str(item).strip() for item in skill_ids):
+            return True
+
+        builtin_tools = meta.get("builtinTools") or {}
+        if isinstance(builtin_tools, dict) and any(bool(value) for value in builtin_tools.values()):
+            return True
+
+        capabilities = meta.get("capabilities") or {}
+        return bool(
+            isinstance(capabilities, dict) and capabilities.get("builtin_tools")
+        )
+
+    def _fail_pending_completions(self, error: Exception) -> None:
+        for pending in list(self._pending_completions.values()):
+            if not pending.future.done():
+                pending.future.set_exception(error)
 
     def _start_heartbeat_loop(self) -> None:
         if self._heartbeat_task and not self._heartbeat_task.done():
@@ -333,6 +410,7 @@ class TeamBotWorker:
                     tool_ids=self.config.tool_ids,
                     tool_server_ids=self.config.tool_server_ids,
                     features=self.config.features,
+                    force_native_function_calling=self._model_uses_native_tools,
                 )
 
             completion = completion.strip()
@@ -388,6 +466,7 @@ class TeamBotWorker:
                 session_id=self.sio.sid,
                 chat_id=chat_id,
                 message_id=message_id,
+                force_native_function_calling=self._model_uses_native_tools,
             )
             if kickoff.get("status") is not True:
                 raise RuntimeError(f"Background completion kickoff failed: {kickoff}")
@@ -469,6 +548,7 @@ class TeamBotWorker:
             or self.config.tool_ids
             or self.config.tool_server_ids
             or self.config.features
+            or self._model_uses_native_tools
         )
 
     async def _load_context(

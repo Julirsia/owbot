@@ -18,11 +18,18 @@ async def _main() -> None:
     config = BotConfig.from_env()
     configure_logging(config.log_level)
     worker = TeamBotWorker(config)
-    await worker.run()
+    try:
+        await worker.run()
+    finally:
+        if worker.sio.connected:
+            await worker.sio.disconnect()
 
 
 def main() -> None:
-    asyncio.run(_main())
+    try:
+        asyncio.run(_main())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        return
 
 
 if __name__ == "__main__":

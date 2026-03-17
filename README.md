@@ -57,4 +57,18 @@ cp .env.example .env
 python -m team_bot.main
 ```
 
+워커가 떠 있는 상태에서 채널 / 스레드 E2E 검증을 자동으로 돌리려면:
+
+```bash
+. .venv/bin/activate
+OPENWEBUI_BASE_URL="http://localhost:3000" \
+OPENWEBUI_BOT_EMAIL="bot@bot.com" \
+OPENWEBUI_BOT_PASSWORD="bot" \
+OPENWEBUI_BOT_USER_ID="actual-bot-user-id" \
+OPENWEBUI_BOT_DISPLAY_NAME="TEAM-BOT" \
+OWBOT_TEST_USER_EMAIL="worker-test-user@local.test" \
+OWBOT_TEST_USER_PASSWORD="bot" \
+python scripts/run_channel_e2e.py
+```
+
 이 단계는 어디까지나 `동작 검증용`입니다. 실제 운영은 대상 환경에서 Open WebUI URL, 봇 계정, 모델 id, terminal id, network topology를 기준으로 다시 설정해야 합니다.

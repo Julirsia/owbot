@@ -110,6 +110,23 @@ class OpenWebUIClient:
             )
         return response
 
+    async def get_models(self) -> List[Dict[str, Any]]:
+        response = await self._request("GET", "/api/models")
+        if isinstance(response, list):
+            return [item for item in response if isinstance(item, dict)]
+        if isinstance(response, dict):
+            for key in ("data", "models"):
+                value = response.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+        raise RuntimeError(f"GET /api/models returned unsupported response: {response!r}")
+
+    async def get_model(self, model_id: str) -> Dict[str, Any]:
+        for model in await self.get_models():
+            if str(model.get("id") or "") == model_id:
+                return model
+        raise RuntimeError(f"Configured model_id={model_id!r} was not found in /api/models")
+
     async def get_current_user(self) -> Dict[str, Any]:
         response = await self._request("GET", "/api/v1/auths/")
         if not isinstance(response, dict):
@@ -143,6 +160,12 @@ class OpenWebUIClient:
             f"/api/v1/channels/{channel_id}/messages/{thread_root_id}/thread?skip=0&limit={limit}",
         )
 
+    async def probe_terminal_connection(self, terminal_id: str) -> Dict[str, Any]:
+        config = await self._request("GET", f"/api/v1/terminals/{terminal_id}/api/config")
+        cwd = await self._request("GET", f"/api/v1/terminals/{terminal_id}/files/cwd")
+        ports = await self._request("GET", f"/api/v1/terminals/{terminal_id}/ports")
+        return {"config": config, "cwd": cwd, "ports": ports}
+
     async def post_channel_message(
         self,
         channel_id: str,
@@ -172,6 +195,7 @@ class OpenWebUIClient:
         tool_ids: List[str],
         tool_server_ids: List[str],
         features: Dict[str, object],
+        force_native_function_calling: bool = False,
     ) -> str:
         payload = self._build_completion_payload(
             model_id=model_id,
@@ -181,6 +205,7 @@ class OpenWebUIClient:
             tool_ids=tool_ids,
             tool_server_ids=tool_server_ids,
             features=features,
+            force_native_function_calling=force_native_function_calling,
         )
         use_native_function_calling = bool(payload.get("params"))
 
@@ -218,6 +243,7 @@ class OpenWebUIClient:
         session_id: str,
         chat_id: str,
         message_id: str,
+        force_native_function_calling: bool = False,
     ) -> Dict[str, Any]:
         payload = self._build_completion_payload(
             model_id=model_id,
@@ -227,6 +253,7 @@ class OpenWebUIClient:
             tool_ids=tool_ids,
             tool_server_ids=tool_server_ids,
             features=features,
+            force_native_function_calling=force_native_function_calling,
         )
         payload["stream"] = True
         payload["session_id"] = session_id
@@ -377,10 +404,16 @@ class OpenWebUIClient:
         tool_ids: List[str],
         tool_server_ids: List[str],
         features: Dict[str, object],
+        force_native_function_calling: bool = False,
     ) -> Dict[str, Any]:
         explicit_tool_ids_only = bool(tool_ids)
         use_native_function_calling = bool(
-            terminal_id or skill_ids or tool_ids or tool_server_ids or features
+            force_native_function_calling
+            or terminal_id
+            or skill_ids
+            or tool_ids
+            or tool_server_ids
+            or features
         )
         payload: Dict[str, Any] = {
             "model": model_id,

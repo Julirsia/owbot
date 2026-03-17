@@ -159,6 +159,12 @@ python -m team_bot.main
 5. 다른 사용자 계정으로 채널에서 자동완성 멘션
 6. 채널 응답과 로그를 함께 확인
 
+반복 검증이 필요하면 [scripts/run_channel_e2e.py](/Users/julirsia/development/company/openwebui-bot/scripts/run_channel_e2e.py)를 사용합니다.
+
+- 전제: 워커가 이미 실행 중이어야 합니다.
+- 입력: bot 계정, 테스트 사용자 계정, bot user id
+- 동작: 임시 그룹 채널 생성 후 메인 채널 / 스레드의 tool / terminal 4개 시나리오를 순서대로 확인
+
 ## 9. 채널 / 스레드 E2E 검증 매트릭스
 
 운영 투입 전에는 아래 여섯 가지를 실제로 모두 통과시켜야 합니다.

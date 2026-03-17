@@ -168,6 +168,21 @@ class OpenWebUIClientTests(unittest.TestCase):
             "정리된 답변",
         )
 
+    def test_build_completion_payload_can_force_native_mode_without_explicit_tools(self) -> None:
+        payload = OpenWebUIClient._build_completion_payload(
+            model_id="test",
+            messages=[{"role": "user", "content": "hi"}],
+            terminal_id="",
+            skill_ids=[],
+            tool_ids=[],
+            tool_server_ids=[],
+            features={},
+            force_native_function_calling=True,
+        )
+
+        self.assertTrue(payload["stream"])
+        self.assertEqual(payload["params"], {"function_calling": "native"})
+
 
 if __name__ == "__main__":
     unittest.main()
