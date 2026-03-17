@@ -10,7 +10,7 @@ from .config import BotConfig
 from .context_builder import (
     SYSTEM_PROMPT,
     build_invocation_context,
-    message_mentions_bot,
+    message_invokes_bot,
 )
 from .openwebui_client import OpenWebUIClient
 from .state import SQLiteStateStore
@@ -48,6 +48,15 @@ class TeamBotWorker:
                 {"auth": {"token": self.config.bot_token}},
                 callback=join_callback,
             )
+            try:
+                channels = await self.client.get_channels()
+                log.info("Bot can access %s channels", len(channels))
+                if not channels:
+                    log.warning(
+                        "Bot currently sees no channels. Check channel membership and features.channels permission."
+                    )
+            except Exception:
+                log.exception("Failed to fetch accessible channels after websocket connect")
             self._start_heartbeat_loop()
 
         @self.sio.event
@@ -57,6 +66,9 @@ class TeamBotWorker:
 
         @self.sio.on("events:channel")
         async def on_channel_event(event: Dict[str, Any]) -> None:
+            event_type = ((event.get("data") or {}).get("type")) or "unknown"
+            channel_id = event.get("channel_id")
+            log.debug("Received channel event type=%s channel_id=%s", event_type, channel_id)
             await self.handle_channel_event(event)
 
     async def run(self) -> None:
@@ -85,12 +97,14 @@ class TeamBotWorker:
 
     async def _heartbeat_loop(self) -> None:
         try:
+            log.info("Heartbeat loop started")
             while True:
                 await self.sio.emit("heartbeat", {})
                 await self.sio.emit(
                     "join-channels",
                     {"auth": {"token": self.config.bot_token}},
                 )
+                log.debug("Sent heartbeat and join-channels")
                 await asyncio.sleep(30)
         except asyncio.CancelledError:
             raise
@@ -104,12 +118,25 @@ class TeamBotWorker:
         message = event_data.get("data") or {}
         user = event.get("user") or {}
         if str(user.get("id") or "") == self.config.bot_user_id:
+            log.debug("Skipping bot's own message id=%s", message.get("id"))
             return
         if user.get("role") == "webhook":
+            log.debug("Skipping webhook message id=%s", message.get("id"))
             return
 
         content = str(message.get("content") or "")
-        if not message_mentions_bot(content, self.config.bot_user_id):
+        log.debug(
+            "Message received id=%s user=%s content=%r",
+            message.get("id"),
+            user.get("name") or user.get("id"),
+            content,
+        )
+        if not message_invokes_bot(
+            content,
+            self.config.bot_user_id,
+            self.config.bot_display_name,
+        ):
+            log.debug("Skipping non-bot-invocation message id=%s", message.get("id"))
             return
 
         dedupe_key = self._dedupe_key(event)
@@ -117,6 +144,12 @@ class TeamBotWorker:
             log.debug("Skipping duplicate channel event: %s", dedupe_key)
             return
 
+        log.info(
+            "Accepted bot invocation channel_id=%s message_id=%s user=%s",
+            event.get("channel_id"),
+            message.get("id"),
+            user.get("name") or user.get("id"),
+        )
         asyncio.create_task(self.process_invocation(event, message))
 
     def _dedupe_key(self, event: Dict[str, Any]) -> str:
@@ -138,6 +171,12 @@ class TeamBotWorker:
         )
 
         try:
+            log.info(
+                "Processing invocation channel_id=%s message_id=%s thread_root_id=%s",
+                channel_id,
+                message.get("id"),
+                thread_root_id,
+            )
             context = await self._load_context(channel_id, message, thread_root_id)
             completion = await self.client.create_chat_completion(
                 model_id=self.config.model_id,
@@ -154,6 +193,12 @@ class TeamBotWorker:
             if not completion:
                 completion = "응답을 생성하지 못했습니다. 한 번 더 호출해 주세요."
 
+            log.info(
+                "Posting response channel_id=%s reply_to_id=%s parent_id=%s",
+                channel_id,
+                message.get("id"),
+                context.thread_root_id,
+            )
             await self.client.post_channel_message(
                 channel_id,
                 completion,

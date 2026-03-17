@@ -2,6 +2,7 @@ import unittest
 
 from team_bot.context_builder import (
     build_invocation_context,
+    message_invokes_bot,
     message_mentions_bot,
     replace_mentions,
     strip_bot_mention,
@@ -13,6 +14,11 @@ class ContextBuilderTests(unittest.TestCase):
         content = "안녕 <@U:user-123|TEAM-BOT> 이거 봐줘"
         self.assertTrue(message_mentions_bot(content, "user-123"))
         self.assertFalse(message_mentions_bot(content, "other-user"))
+
+    def test_message_invokes_bot_accepts_plain_display_name(self) -> None:
+        self.assertTrue(message_invokes_bot("@TEAM-BOT 확인해줘", "user-123", "TEAM-BOT"))
+        self.assertTrue(message_invokes_bot(" @팀봇 부탁해", "user-123", "팀봇"))
+        self.assertFalse(message_invokes_bot("@OTHER-BOT 확인해줘", "user-123", "TEAM-BOT"))
 
     def test_strip_bot_mention_preserves_other_text(self) -> None:
         content = "안녕 <@U:user-123|TEAM-BOT> 이거 봐줘"

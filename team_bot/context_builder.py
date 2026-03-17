@@ -41,6 +41,19 @@ def message_mentions_bot(message: str, bot_user_id: str) -> bool:
     )
 
 
+def message_mentions_bot_display_name(message: str, bot_display_name: str) -> bool:
+    if not bot_display_name:
+        return False
+    pattern = re.compile(rf"(^|\s)@{re.escape(bot_display_name)}(?=\s|$|[,.!?])")
+    return bool(pattern.search(message or ""))
+
+
+def message_invokes_bot(message: str, bot_user_id: str, bot_display_name: str) -> bool:
+    return message_mentions_bot(message, bot_user_id) or message_mentions_bot_display_name(
+        message, bot_display_name
+    )
+
+
 def _display_name(message: Dict[str, object]) -> str:
     meta = message.get("meta") or {}
     if isinstance(meta, dict) and meta.get("model_name"):

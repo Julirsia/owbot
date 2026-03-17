@@ -58,6 +58,9 @@ class OpenWebUIClient:
             f"/api/v1/channels/{channel_id}/messages?skip=0&limit={limit}",
         )
 
+    async def get_channels(self) -> List[Dict[str, Any]]:
+        return await self._request("GET", "/api/v1/channels")
+
     async def get_channel_message(self, channel_id: str, message_id: str) -> Dict[str, Any]:
         return await self._request("GET", f"/api/v1/channels/{channel_id}/messages/{message_id}")
 
