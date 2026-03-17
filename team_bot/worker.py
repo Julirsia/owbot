@@ -303,6 +303,8 @@ class TeamBotWorker:
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": context.prompt},
                 ],
+                terminal_id=self.config.terminal_id,
+                skill_ids=self.config.skill_ids,
                 tool_ids=self.config.tool_ids,
                 tool_server_ids=self.config.tool_server_ids,
                 features=self.config.features,

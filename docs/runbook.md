@@ -25,6 +25,8 @@
 - `OPENWEBUI_BOT_PASSWORD`
 - `OPENWEBUI_BOT_DISPLAY_NAME`
 - `OPENWEBUI_MODEL_ID`
+- `OPENWEBUI_TERMINAL_ID`
+- `OPENWEBUI_SKILL_IDS`
 - `OPENWEBUI_TOOL_IDS`
 - `OPENWEBUI_TOOL_SERVER_IDS`
 - `OPENWEBUI_FEATURES_JSON`
@@ -44,6 +46,8 @@ export OPENWEBUI_BOT_PASSWORD="super-secret-password"
 export OPENWEBUI_BOT_USER_ID="user-123"
 export OPENWEBUI_BOT_DISPLAY_NAME="TEAM-BOT"
 export OPENWEBUI_MODEL_ID="gpt-5-mini"
+export OPENWEBUI_TERMINAL_ID="terminal1"
+export OPENWEBUI_SKILL_IDS="run-tests-skill"
 export OPENWEBUI_TOOL_IDS="tool_1,tool_2"
 export OPENWEBUI_TOOL_SERVER_IDS="server_1"
 export OPENWEBUI_FEATURES_JSON='{"web_search": true, "image_generation": false, "code_interpreter": false}'
@@ -66,10 +70,13 @@ python -m team_bot.main
 - 사용자가 채널에서 `@TEAM-BOT`을 멘션해야만 반응합니다.
 - 메인 채널에서 호출하면 메인 채널에 답합니다.
 - 스레드에서 호출하면 같은 스레드에 답합니다.
+- `OPENWEBUI_TERMINAL_ID`가 설정되어 있으면 completion 요청에 `terminal_id`를 함께 보내 Open Terminal 실행을 허용합니다.
+- `OPENWEBUI_SKILL_IDS`가 설정되어 있으면 completion 요청에 `skill_ids`를 함께 보냅니다.
 
 ## 5. 장애 대응
 
 - 봇이 무응답이면 먼저 Open WebUI 토큰과 `OPENWEBUI_BOT_USER_ID`가 일치하는지 확인합니다.
 - `OPENWEBUI_BOT_TOKEN`이 `sk-...` API 키라면 websocket 수신에는 부족할 수 있습니다. 이 경우 `OPENWEBUI_BOT_SESSION_TOKEN` 또는 `OPENWEBUI_BOT_EMAIL` / `OPENWEBUI_BOT_PASSWORD`를 함께 설정해야 합니다.
+- Open Terminal을 쓸 때는 Open WebUI에서 해당 `terminal_id` 연결이 만들어져 있고, 봇 계정이 그 연결에 대한 접근 권한을 가지고 있어야 합니다.
 - 이벤트는 SQLite 상태 저장소로 중복 제거합니다. 테스트 중 같은 메시지를 다시 처리하려면 `STATE_DB_PATH` 파일을 지웁니다.
 - 도구 호출 실패는 Open WebUI 쪽 모델/도구 설정 문제일 수 있으므로, 동일 토큰으로 `/api/chat/completions`를 직접 호출해 재현해 봅니다.

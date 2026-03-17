@@ -48,6 +48,8 @@ class BotConfig:
     bot_user_id: str
     bot_display_name: str
     model_id: str
+    terminal_id: str
+    skill_ids: List[str]
     tool_ids: List[str]
     tool_server_ids: List[str]
     features: Dict[str, object]
@@ -90,6 +92,8 @@ class BotConfig:
             bot_user_id=bot_user_id,
             bot_display_name=os.getenv("OPENWEBUI_BOT_DISPLAY_NAME", "TEAM-BOT"),
             model_id=os.getenv("OPENWEBUI_MODEL_ID", "gpt-5-mini"),
+            terminal_id=os.getenv("OPENWEBUI_TERMINAL_ID", "").strip(),
+            skill_ids=_split_csv(os.getenv("OPENWEBUI_SKILL_IDS", "")),
             tool_ids=_split_csv(os.getenv("OPENWEBUI_TOOL_IDS", "")),
             tool_server_ids=_split_csv(os.getenv("OPENWEBUI_TOOL_SERVER_IDS", "")),
             features=_parse_json(os.getenv("OPENWEBUI_FEATURES_JSON", "")),

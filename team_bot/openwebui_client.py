@@ -131,6 +131,8 @@ class OpenWebUIClient:
         *,
         model_id: str,
         messages: List[Dict[str, str]],
+        terminal_id: str,
+        skill_ids: List[str],
         tool_ids: List[str],
         tool_server_ids: List[str],
         features: Dict[str, object],
@@ -143,8 +145,12 @@ class OpenWebUIClient:
             "tool_servers": tool_server_ids or None,
             "features": features,
         }
+        if terminal_id:
+            payload["terminal_id"] = terminal_id
+        if skill_ids:
+            payload["skill_ids"] = skill_ids
 
-        if tool_ids or tool_server_ids or features:
+        if terminal_id or skill_ids or tool_ids or tool_server_ids or features:
             payload["params"] = {"function_calling": "native"}
 
         response = await self._request("POST", "/api/chat/completions", json_body=payload)
