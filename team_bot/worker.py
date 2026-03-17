@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 import socketio
 
@@ -23,10 +25,19 @@ log = logging.getLogger(__name__)
 CHANNEL_EVENT_NAMES = ("events:channel", "channel-events")
 
 
+@dataclass
+class PendingCompletion:
+    future: asyncio.Future[str]
+    latest_text: str = ""
+
+
 class TeamBotWorker:
     def __init__(self, config: BotConfig) -> None:
         self.config = config
         self.state = SQLiteStateStore(config.state_db_path)
+        self._bot_user_id = config.bot_user_id
+        self._bot_display_name = config.bot_display_name
+        self._pending_completions: Dict[Tuple[str, str], PendingCompletion] = {}
         if config.socketio_debug:
             logging.getLogger("socketio").setLevel(logging.DEBUG)
             logging.getLogger("engineio").setLevel(logging.DEBUG)
@@ -81,6 +92,10 @@ class TeamBotWorker:
                     actual_user_name,
                     current_user.get("role"),
                 )
+                if actual_user_id:
+                    self._bot_user_id = actual_user_id
+                if actual_user_name:
+                    self._bot_display_name = actual_user_name
                 if actual_user_id and actual_user_id != self.config.bot_user_id:
                     log.warning(
                         "Configured OPENWEBUI_BOT_USER_ID=%r does not match token owner id=%r",
@@ -148,9 +163,14 @@ class TeamBotWorker:
         for event_name in CHANNEL_EVENT_NAMES:
             self.sio.on(event_name, handler=make_channel_handler(event_name))
 
+        @self.sio.on("events")
+        async def on_chat_event(event: Dict[str, Any]) -> Dict[str, Any]:
+            await self._handle_completion_event(event)
+            return {"ok": True}
+
         @self.sio.on("*")
         async def on_any_event(event: str, *args: Any) -> None:
-            if event in CHANNEL_EVENT_NAMES:
+            if event in CHANNEL_EVENT_NAMES or event == "events":
                 return
             if not self.config.socketio_debug:
                 return
@@ -222,7 +242,7 @@ class TeamBotWorker:
 
         message = event_data.get("data") or {}
         user = event.get("user") or {}
-        if str(user.get("id") or "") == self.config.bot_user_id:
+        if str(user.get("id") or "") == self._bot_user_id:
             log.debug("Skipping bot's own message id=%s", message.get("id"))
             return
         if user.get("role") == "webhook":
@@ -241,8 +261,8 @@ class TeamBotWorker:
         if self.config.log_message_content:
             log.info("Message content id=%s content=%r", message.get("id"), content)
 
-        structured_match = message_mentions_bot(content, self.config.bot_user_id)
-        display_match = message_mentions_bot_display_name(content, self.config.bot_display_name)
+        structured_match = message_mentions_bot(content, self._bot_user_id)
+        display_match = message_mentions_bot_display_name(content, self._bot_display_name)
         mentions = extract_mentions(content)
         log.debug(
             "Mention analysis id=%s structured_match=%s display_match=%s mentions=%s",
@@ -253,8 +273,8 @@ class TeamBotWorker:
         )
         if not message_invokes_bot(
             content,
-            self.config.bot_user_id,
-            self.config.bot_display_name,
+            self._bot_user_id,
+            self._bot_display_name,
         ):
             log.debug("Skipping non-bot-invocation message id=%s", message.get("id"))
             return
@@ -298,18 +318,22 @@ class TeamBotWorker:
                 thread_root_id,
             )
             context = await self._load_context(channel_id, message, thread_root_id)
-            completion = await self.client.create_chat_completion(
-                model_id=self.config.model_id,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": context.prompt},
-                ],
-                terminal_id=self.config.terminal_id,
-                skill_ids=self.config.skill_ids,
-                tool_ids=self.config.tool_ids,
-                tool_server_ids=self.config.tool_server_ids,
-                features=self.config.features,
-            )
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": context.prompt},
+            ]
+            if self._uses_native_tools() and self.sio.sid:
+                completion = await self._create_background_completion(messages)
+            else:
+                completion = await self.client.create_chat_completion(
+                    model_id=self.config.model_id,
+                    messages=messages,
+                    terminal_id=self.config.terminal_id,
+                    skill_ids=self.config.skill_ids,
+                    tool_ids=self.config.tool_ids,
+                    tool_server_ids=self.config.tool_server_ids,
+                    features=self.config.features,
+                )
 
             completion = completion.strip()
             if not completion:
@@ -343,6 +367,110 @@ class TeamBotWorker:
             except asyncio.CancelledError:
                 pass
 
+    async def _create_background_completion(self, messages: List[Dict[str, str]]) -> str:
+        if not self.sio.sid:
+            raise RuntimeError("Websocket session is not connected")
+
+        chat_id = f"local:{uuid4()}"
+        message_id = str(uuid4())
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        self._pending_completions[(chat_id, message_id)] = PendingCompletion(future=future)
+
+        try:
+            kickoff = await self.client.start_background_chat_completion(
+                model_id=self.config.model_id,
+                messages=messages,
+                terminal_id=self.config.terminal_id,
+                skill_ids=self.config.skill_ids,
+                tool_ids=self.config.tool_ids,
+                tool_server_ids=self.config.tool_server_ids,
+                features=self.config.features,
+                session_id=self.sio.sid,
+                chat_id=chat_id,
+                message_id=message_id,
+            )
+            if kickoff.get("status") is not True:
+                raise RuntimeError(f"Background completion kickoff failed: {kickoff}")
+
+            timeout_seconds = max(
+                self.config.completion_timeout_seconds,
+                self.config.tool_timeout_seconds,
+            )
+            return await asyncio.wait_for(future, timeout=timeout_seconds)
+        finally:
+            self._pending_completions.pop((chat_id, message_id), None)
+
+    async def _handle_completion_event(self, event: Dict[str, Any]) -> None:
+        chat_id = str(event.get("chat_id") or "")
+        message_id = str(event.get("message_id") or "")
+        if not chat_id or not message_id:
+            return
+
+        pending = self._pending_completions.get((chat_id, message_id))
+        if pending is None:
+            return
+
+        payload = event.get("data") or {}
+        event_type = payload.get("type")
+        data = payload.get("data") or {}
+
+        if self.config.socketio_debug:
+            log.debug(
+                "Completion event chat_id=%s message_id=%s type=%s payload=%s",
+                chat_id,
+                message_id,
+                event_type,
+                self._safe_repr(data),
+            )
+
+        if event_type == "chat:completion" and isinstance(data, dict):
+            extracted = self.client.extract_event_completion_text(data)
+            if extracted:
+                pending.latest_text = extracted
+            if data.get("done") and not pending.future.done():
+                if pending.latest_text:
+                    pending.future.set_result(pending.latest_text)
+                else:
+                    pending.future.set_exception(
+                        RuntimeError("Tool-enabled completion finished without a final assistant message")
+                    )
+            return
+
+        if event_type == "chat:message:error" and not pending.future.done():
+            error = data.get("error") if isinstance(data, dict) else None
+            message = ""
+            if isinstance(error, dict):
+                message = str(error.get("content") or "")
+            pending.future.set_exception(
+                RuntimeError(message or "Open WebUI returned a chat message error")
+            )
+            return
+
+        if event_type == "chat:tasks:cancel" and not pending.future.done():
+            if pending.latest_text:
+                pending.future.set_result(pending.latest_text)
+            else:
+                pending.future.set_exception(RuntimeError("Open WebUI cancelled the chat task"))
+            return
+
+        if event_type == "chat:active" and isinstance(data, dict):
+            if data.get("active") is False and not pending.future.done():
+                if pending.latest_text:
+                    pending.future.set_result(pending.latest_text)
+                else:
+                    pending.future.set_exception(
+                        RuntimeError("Tool-enabled completion finished without a final assistant message")
+                    )
+
+    def _uses_native_tools(self) -> bool:
+        return bool(
+            self.config.terminal_id
+            or self.config.skill_ids
+            or self.config.tool_ids
+            or self.config.tool_server_ids
+            or self.config.features
+        )
+
     async def _load_context(
         self,
         channel_id: str,
@@ -368,7 +496,7 @@ class TeamBotWorker:
             recent_channel_messages=recent_channel_messages,
             thread_root_message=thread_root_message,
             thread_messages=thread_messages,
-            bot_user_id=self.config.bot_user_id,
+            bot_user_id=self._bot_user_id,
         )
 
     @staticmethod

@@ -131,6 +131,43 @@ class OpenWebUIClientTests(unittest.TestCase):
 
         self.assertEqual(OpenWebUIClient._extract_stream_message_text(chunk), "최종 응답")
 
+    def test_extract_event_completion_text_prefers_final_output_message(self) -> None:
+        payload = {
+            "done": True,
+            "content": "<details type=\"reasoning\">중간 추론</details>\n최종 응답",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "content": [{"type": "output_text", "text": "중간 추론"}],
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "최종 응답"}],
+                },
+            ],
+        }
+
+        self.assertEqual(
+            OpenWebUIClient.extract_event_completion_text(payload),
+            "최종 응답",
+        )
+
+    def test_extract_event_completion_text_strips_details_markup(self) -> None:
+        payload = {
+            "done": True,
+            "content": (
+                "<details type=\"reasoning\" done=\"true\">생각 중</details>\n"
+                "<details type=\"tool_calls\" done=\"true\">도구 호출</details>\n"
+                "정리된 답변"
+            ),
+        }
+
+        self.assertEqual(
+            OpenWebUIClient.extract_event_completion_text(payload),
+            "정리된 답변",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

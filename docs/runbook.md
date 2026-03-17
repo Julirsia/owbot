@@ -78,12 +78,13 @@ python -m team_bot.main
 - 위 세 값을 env에 넣으면 모델 UI 설정보다 요청 바디 값이 우선합니다.
 - `OPENWEBUI_TOOL_IDS`를 직접 지정하면 그 요청은 `tool_ids`만 보내는 단순 모드로 처리됩니다. 이 경우 `terminal_id`, `skill_ids`, `tool_servers`, `features`는 함께 섞지 않습니다.
 - `OPENWEBUI_TOOL_TIMEOUT_SECONDS`는 tool/terminal 경로의 `/api/chat/completions` 요청 타임아웃입니다.
-- tool/terminal/MCP 경로도 별도 chat lifecycle을 흉내 내지 않고 `/api/chat/completions` 단일 응답을 그대로 사용합니다.
+- native tool/terminal/MCP 경로는 Open WebUI의 websocket `events` lifecycle을 사용합니다. 워커는 실제 socket `session_id`와 임시 `local:` chat id / message id를 completion 요청에 넣고, HTTP 응답의 `task_id` 이후 결과는 websocket `events`에서 기다립니다.
 
 ## 5. 장애 대응
 
 - 봇이 무응답이면 먼저 Open WebUI 토큰과 `OPENWEBUI_BOT_USER_ID`가 일치하는지 확인합니다.
 - `OPENWEBUI_BOT_TOKEN`이 `sk-...` API 키라면 websocket 수신에는 부족할 수 있습니다. 이 경우 `OPENWEBUI_BOT_SESSION_TOKEN` 또는 `OPENWEBUI_BOT_EMAIL` / `OPENWEBUI_BOT_PASSWORD`를 함께 설정해야 합니다.
 - Open Terminal을 쓸 때는 Open WebUI에서 해당 `terminal_id` 연결이 만들어져 있고, 봇 계정이 그 연결에 대한 접근 권한을 가지고 있어야 합니다.
+- Open WebUI를 Docker로 띄웠다면 Open Terminal URL에 `http://localhost:8000`을 넣으면 안 됩니다. 컨테이너 안에서의 `localhost`는 Open WebUI 자신이므로, `http://host.docker.internal:8000` 또는 컨테이너 간 통신 가능한 주소를 사용해야 합니다.
 - 이벤트는 SQLite 상태 저장소로 중복 제거합니다. 테스트 중 같은 메시지를 다시 처리하려면 `STATE_DB_PATH` 파일을 지웁니다.
 - 도구 호출 실패는 Open WebUI 쪽 모델/도구 설정 문제일 수 있으므로, 동일 토큰으로 `/api/chat/completions`를 직접 호출해 재현해 봅니다.

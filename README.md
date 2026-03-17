@@ -2,7 +2,7 @@
 
 Open WebUI 채널에서 `@TEAM-BOT`을 멘션하면 최근 채널 문맥과 현재 스레드 문맥을 읽고 응답하는 외부 워커형 봇입니다.
 
-기본적으로 모델 UI에 저장된 도구 설정을 따르며, `OPENWEBUI_TOOL_IDS`를 지정하면 그 요청은 `tool_ids`만 명시적으로 보내는 단순 모드로 동작합니다. 이 경우 `OPENWEBUI_TOOL_SERVER_IDS` / `OPENWEBUI_FEATURES_JSON` / `OPENWEBUI_TERMINAL_ID` / `OPENWEBUI_SKILL_IDS`는 같은 요청에서 섞지 않습니다. 일반 응답은 `/api/chat/completions`의 단일 JSON 응답을 사용하고, native tool/terminal 경로는 `stream=true` SSE를 끝까지 읽으면서 `tool_calls`를 중간 상태로 처리합니다.
+기본적으로 모델 UI에 저장된 도구 설정을 따르며, `OPENWEBUI_TOOL_IDS`를 지정하면 그 요청은 `tool_ids`만 명시적으로 보내는 단순 모드로 동작합니다. 이 경우 `OPENWEBUI_TOOL_SERVER_IDS` / `OPENWEBUI_FEATURES_JSON` / `OPENWEBUI_TERMINAL_ID` / `OPENWEBUI_SKILL_IDS`는 같은 요청에서 섞지 않습니다. 일반 응답은 `/api/chat/completions`의 단일 JSON 응답을 사용하고, native tool/terminal 경로는 현재 websocket `events` 기반 completion lifecycle을 사용합니다. 즉 워커는 실제 socket `session_id`와 임시 `chat_id`/`message_id`를 completion 요청에 넣고, 최종 답변은 HTTP 본문이 아니라 websocket `events`에서 회수합니다.
 
 ## 구조
 

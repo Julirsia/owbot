@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
+import re
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 try:
@@ -171,28 +173,16 @@ class OpenWebUIClient:
         tool_server_ids: List[str],
         features: Dict[str, object],
     ) -> str:
-        explicit_tool_ids_only = bool(tool_ids)
-        use_native_function_calling = bool(
-            terminal_id or skill_ids or tool_ids or tool_server_ids or features
+        payload = self._build_completion_payload(
+            model_id=model_id,
+            messages=messages,
+            terminal_id=terminal_id,
+            skill_ids=skill_ids,
+            tool_ids=tool_ids,
+            tool_server_ids=tool_server_ids,
+            features=features,
         )
-        payload: Dict[str, Any] = {
-            "model": model_id,
-            "messages": messages,
-            "stream": use_native_function_calling,
-        }
-        if tool_ids:
-            payload["tool_ids"] = tool_ids
-        if tool_server_ids and not explicit_tool_ids_only:
-            payload["tool_servers"] = tool_server_ids
-        if features and not explicit_tool_ids_only:
-            payload["features"] = features
-        if terminal_id and not explicit_tool_ids_only:
-            payload["terminal_id"] = terminal_id
-        if skill_ids and not explicit_tool_ids_only:
-            payload["skill_ids"] = skill_ids
-
-        if use_native_function_calling:
-            payload["params"] = {"function_calling": "native"}
+        use_native_function_calling = bool(payload.get("params"))
 
         log.debug(
             "Posting chat completion model=%s native=%s payload=%s",
@@ -214,6 +204,75 @@ class OpenWebUIClient:
             self._extract_tool_names(response),
         )
         return self.extract_message_content(response)
+
+    async def start_background_chat_completion(
+        self,
+        *,
+        model_id: str,
+        messages: List[Dict[str, str]],
+        terminal_id: str,
+        skill_ids: List[str],
+        tool_ids: List[str],
+        tool_server_ids: List[str],
+        features: Dict[str, object],
+        session_id: str,
+        chat_id: str,
+        message_id: str,
+    ) -> Dict[str, Any]:
+        payload = self._build_completion_payload(
+            model_id=model_id,
+            messages=messages,
+            terminal_id=terminal_id,
+            skill_ids=skill_ids,
+            tool_ids=tool_ids,
+            tool_server_ids=tool_server_ids,
+            features=features,
+        )
+        payload["stream"] = True
+        payload["session_id"] = session_id
+        payload["chat_id"] = chat_id
+        payload["id"] = message_id
+
+        log.debug(
+            "Starting background chat completion session_id=%s chat_id=%s message_id=%s payload=%s",
+            session_id,
+            chat_id,
+            message_id,
+            self._summarize_payload(payload),
+        )
+        response = await self._request(
+            "POST",
+            "/api/chat/completions",
+            json_body=payload,
+            timeout_seconds=self.tool_timeout_seconds,
+        )
+        if not isinstance(response, dict):
+            raise RuntimeError(
+                f"Background completion returned non-dict response: {response!r}"
+            )
+        return response
+
+    @staticmethod
+    def extract_event_completion_text(event_payload: Dict[str, Any]) -> str:
+        output = event_payload.get("output")
+        if isinstance(output, list):
+            for item in reversed(output):
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") != "message" or item.get("role") != "assistant":
+                    continue
+                extracted = OpenWebUIClient._collect_text(item.get("content")).strip()
+                if extracted:
+                    return extracted
+
+        content = event_payload.get("content")
+        if isinstance(content, str):
+            cleaned = re.sub(r"<details\b.*?</details>\s*", "", content, flags=re.DOTALL)
+            cleaned = html.unescape(cleaned).strip()
+            if cleaned:
+                return cleaned
+
+        return ""
 
     async def _stream_chat_completion(self, payload: Dict[str, Any]) -> str:
         url = f"{self.base_url}/api/chat/completions"
@@ -307,6 +366,40 @@ class OpenWebUIClient:
             raise RuntimeError(
                 f"POST /api/chat/completions timed out after {self.tool_timeout_seconds} seconds"
             ) from exc
+
+    @staticmethod
+    def _build_completion_payload(
+        *,
+        model_id: str,
+        messages: List[Dict[str, str]],
+        terminal_id: str,
+        skill_ids: List[str],
+        tool_ids: List[str],
+        tool_server_ids: List[str],
+        features: Dict[str, object],
+    ) -> Dict[str, Any]:
+        explicit_tool_ids_only = bool(tool_ids)
+        use_native_function_calling = bool(
+            terminal_id or skill_ids or tool_ids or tool_server_ids or features
+        )
+        payload: Dict[str, Any] = {
+            "model": model_id,
+            "messages": messages,
+            "stream": use_native_function_calling,
+        }
+        if tool_ids:
+            payload["tool_ids"] = tool_ids
+        if tool_server_ids and not explicit_tool_ids_only:
+            payload["tool_servers"] = tool_server_ids
+        if features and not explicit_tool_ids_only:
+            payload["features"] = features
+        if terminal_id and not explicit_tool_ids_only:
+            payload["terminal_id"] = terminal_id
+        if skill_ids and not explicit_tool_ids_only:
+            payload["skill_ids"] = skill_ids
+        if use_native_function_calling:
+            payload["params"] = {"function_calling": "native"}
+        return payload
 
     @staticmethod
     def extract_message_content(response: Dict[str, Any]) -> str:
