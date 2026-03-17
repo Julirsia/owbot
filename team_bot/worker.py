@@ -20,6 +20,7 @@ from .state import SQLiteStateStore
 
 
 log = logging.getLogger(__name__)
+CHANNEL_EVENT_NAMES = ("events:channel", "channel-events")
 
 
 class TeamBotWorker:
@@ -123,14 +124,33 @@ class TeamBotWorker:
             log.warning("Disconnected from Open WebUI websocket")
             await self._stop_heartbeat_loop()
 
-        @self.sio.on("events:channel")
-        async def on_channel_event(event: Dict[str, Any]) -> None:
+        async def on_channel_event(event_name: str, event: Dict[str, Any]) -> None:
             if self.config.log_raw_channel_events:
-                log.info("Raw events:channel payload: %s", self._safe_repr(event))
+                log.info("Raw %s payload: %s", event_name, self._safe_repr(event))
             event_type = ((event.get("data") or {}).get("type")) or "unknown"
             channel_id = event.get("channel_id")
-            log.debug("Received channel event type=%s channel_id=%s", event_type, channel_id)
+            log.debug(
+                "Received channel event name=%s type=%s channel_id=%s",
+                event_name,
+                event_type,
+                channel_id,
+            )
             await self.handle_channel_event(event)
+
+        for event_name in CHANNEL_EVENT_NAMES:
+            self.sio.on(
+                event_name,
+                handler=lambda event, event_name=event_name: on_channel_event(event_name, event),
+            )
+
+        @self.sio.on("*")
+        async def on_any_event(event: str, *args: Any) -> None:
+            if event in CHANNEL_EVENT_NAMES:
+                return
+            if not self.config.socketio_debug:
+                return
+            preview = self._safe_repr(args)
+            log.debug("Received non-channel socket event name=%s args=%s", event, preview)
 
     async def run(self) -> None:
         async with self.client:
