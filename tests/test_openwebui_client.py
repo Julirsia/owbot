@@ -89,6 +89,35 @@ class OpenWebUIClientTests(unittest.TestCase):
             ["run_terminal_command", "read_file"],
         )
 
+    def test_extract_chat_message_content_reads_history_message(self) -> None:
+        response = {
+            "chat": {
+                "history": {
+                    "messages": {
+                        "assistant-1": {
+                            "id": "assistant-1",
+                            "content": [{"type": "text", "text": "최종 응답"}],
+                        }
+                    }
+                }
+            }
+        }
+
+        self.assertEqual(
+            OpenWebUIClient._extract_chat_message_content(response, "assistant-1"),
+            "최종 응답",
+        )
+
+    def test_last_user_content_returns_latest_user_message(self) -> None:
+        messages = [
+            {"role": "system", "content": "시스템"},
+            {"role": "user", "content": "첫 요청"},
+            {"role": "assistant", "content": "중간 답변"},
+            {"role": "user", "content": "마지막 요청"},
+        ]
+
+        self.assertEqual(OpenWebUIClient._last_user_content(messages), "마지막 요청")
+
 
 if __name__ == "__main__":
     unittest.main()
