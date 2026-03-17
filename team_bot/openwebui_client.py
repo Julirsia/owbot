@@ -228,7 +228,11 @@ class OpenWebUIClient:
             model_id=str(payload["model"]),
             timestamp=now,
         )
-        await self._request("POST", f"/api/v1/chats/{chat_id}", json_body=enriched_chat)
+        await self._request(
+            "POST",
+            f"/api/v1/chats/{chat_id}",
+            json_body={"chat": enriched_chat},
+        )
 
         stateful_payload = dict(payload)
         stateful_payload.update(
