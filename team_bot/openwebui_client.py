@@ -303,12 +303,19 @@ class OpenWebUIClient:
             bool(immediate_text),
             self._extract_tool_names(completion_response),
         )
-        await self._notify_chat_completed(
+        completed_response = await self._notify_chat_completed(
             chat_id,
             assistant_message_id,
             session_id,
             model_id=str(payload["model"]),
         )
+        completed_text = self._extract_chat_message_content(completed_response, assistant_message_id)
+        if not completed_text:
+            completed_text = self._extract_latest_assistant_message_content(completed_response)
+        if not completed_text:
+            completed_text = self._extract_message_text_or_empty(completed_response)
+        if completed_text:
+            return completed_text
         final_text = await self._wait_for_final_chat_message(chat_id, assistant_message_id)
         if final_text:
             return final_text
@@ -324,11 +331,11 @@ class OpenWebUIClient:
         session_id: str,
         *,
         model_id: str,
-    ) -> None:
+    ) -> Any:
         try:
             chat_response = await self._request("GET", f"/api/v1/chats/{chat_id}")
             completed_messages = self._extract_completed_messages(chat_response)
-            await self._request(
+            response = await self._request(
                 "POST",
                 "/api/chat/completed",
                 json_body={
@@ -339,8 +346,16 @@ class OpenWebUIClient:
                     "messages": completed_messages,
                 },
             )
+            log.debug(
+                "chat/completed response summary chat_id=%s assistant_id=%s summary=%s",
+                chat_id,
+                message_id,
+                self._summarize_chat_response(response),
+            )
+            return response
         except Exception:
             log.debug("Ignoring /api/chat/completed failure", exc_info=True)
+            return None
 
     async def _wait_for_final_chat_message(
         self,
@@ -401,16 +416,32 @@ class OpenWebUIClient:
 
     @staticmethod
     def _extract_message_text_or_empty(response: Any) -> str:
-        choices = response.get("choices") or []
-        if not isinstance(choices, list) or not choices:
-            return ""
+        if isinstance(response, dict):
+            for candidate in (
+                response.get("message"),
+                response.get("content"),
+                response.get("text"),
+                response.get("response"),
+                response.get("data"),
+            ):
+                extracted = OpenWebUIClient._collect_text(candidate).strip()
+                if extracted:
+                    return extracted
 
-        choice = choices[0] or {}
-        message = choice.get("message") or {}
-        for candidate in (message.get("content"), choice.get("text")):
-            extracted = OpenWebUIClient._collect_text(candidate).strip()
-            if extracted:
-                return extracted
+            choices = response.get("choices") or []
+            if isinstance(choices, list) and choices:
+                choice = choices[0] or {}
+                message = choice.get("message") or {}
+                for candidate in (
+                    message.get("content"),
+                    message.get("text"),
+                    choice.get("text"),
+                    choice.get("content"),
+                    choice.get("response"),
+                ):
+                    extracted = OpenWebUIClient._collect_text(candidate).strip()
+                    if extracted:
+                        return extracted
 
         return ""
 
@@ -461,6 +492,9 @@ class OpenWebUIClient:
         chat = response.get("chat")
         if isinstance(chat, dict):
             candidate_chats.append(chat)
+        data = response.get("data")
+        if isinstance(data, dict):
+            candidate_chats.append(data)
 
         for candidate in candidate_chats:
             history = candidate.get("history") or {}
@@ -496,6 +530,9 @@ class OpenWebUIClient:
         chat = response.get("chat")
         if isinstance(chat, dict):
             candidate_chats.append(chat)
+        data = response.get("data")
+        if isinstance(data, dict):
+            candidate_chats.append(data)
 
         for candidate in candidate_chats:
             history = candidate.get("history") or {}
