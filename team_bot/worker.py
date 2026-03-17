@@ -45,17 +45,6 @@ class TeamBotWorker:
         self._model_uses_native_tools = False
         self._pending_completions: Dict[Tuple[str, str], PendingCompletion] = {}
         self._startup_ready: Optional[asyncio.Future[None]] = None
-        if config.socketio_debug:
-            logging.getLogger("socketio").setLevel(logging.DEBUG)
-            logging.getLogger("engineio").setLevel(logging.DEBUG)
-        self.sio = socketio.AsyncClient(
-            logger=config.socketio_debug,
-            engineio_logger=config.socketio_debug,
-            # Reconnect is managed by TeamBotWorker.run(); enabling both the
-            # socketio client's internal reconnect loop and our outer retry
-            # loop can cause "Already connected" races in a single process.
-            reconnection=False,
-        )
         self.client = OpenWebUIClient(
             config.base_url,
             config.bot_token,
@@ -64,6 +53,24 @@ class TeamBotWorker:
         )
         self._heartbeat_task: Optional[asyncio.Task[Any]] = None
         self._ws_token = config.bot_session_token or ""
+        self.sio = self._create_socket_client()
+        self._register_handlers()
+
+    def _create_socket_client(self) -> socketio.AsyncClient:
+        if self.config.socketio_debug:
+            logging.getLogger("socketio").setLevel(logging.DEBUG)
+            logging.getLogger("engineio").setLevel(logging.DEBUG)
+        return socketio.AsyncClient(
+            logger=self.config.socketio_debug,
+            engineio_logger=self.config.socketio_debug,
+            # Reconnect is managed by TeamBotWorker.run(); enabling both the
+            # socketio client's internal reconnect loop and our outer retry
+            # loop can cause "Already connected" races in a single process.
+            reconnection=False,
+        )
+
+    def _reset_socket_client(self) -> None:
+        self.sio = self._create_socket_client()
         self._register_handlers()
 
     def _register_handlers(self) -> None:
@@ -199,6 +206,7 @@ class TeamBotWorker:
                 self._startup_ready = asyncio.get_running_loop().create_future()
                 try:
                     self._ws_token = await self._resolve_websocket_token()
+                    self._reset_socket_client()
                     await self.sio.connect(
                         self.config.base_url,
                         socketio_path="/ws/socket.io",
